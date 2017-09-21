@@ -120,7 +120,7 @@ def backpropagate(X, Y, weights, activations):
     return dw1, db1, dw2, db2, dw3, db3
 
 # Let's create a model with 2 hidden layers with 100 units
-def model(X_train, Y_train, X_test, Y_test, num_iterations=100, learning_rate=0.5):
+def model(X_train, Y_train, X_test, Y_test, num_iterations=5, learning_rate=0.01):
     n_x, n_m = X_train.shape
     # n_y, _ = Y_train.shape
     n_y = 1
@@ -132,48 +132,17 @@ def model(X_train, Y_train, X_test, Y_test, num_iterations=100, learning_rate=0.
 
     for i in range(num_iterations):
         # forward pass
-        z1 = linear(w1, X_train, b1)
-        a1 = relu(z1)
-
-        z2 = linear(w2, a1, b2)
-        a2 = relu(z2)
-
-        z3 = linear(w3, a2, b3)
-        a3 = sigmoid(z3)
-
-        # Cost
-        cost = binary_cross_entropy(Y_train, a3)
+        weights = w1, b1, w2, b2, w3, b3
+        cost, activations = forward_pass(X_train, Y_train, weights)
         print('Cost:', cost)
 
-        weights = w1, b1, w2, b2, w3, b3
-        cost1, activations = forward_pass(X_train, Y_train, weights)
-
-
-        dcost_step = binary_cross_entropy_d(Y_train, a3)
-        a3_d = sigmoid_d(a3)
-        dz3_step = a3_d * dcost_step
-
-
-        dz3 = a3 - Y_train
-
-
-        print('Dz3 Step:', dz3_step.shape)
-        print('Dz3:', dz3.shape)
-        # assert(np.all(dz3_step == dz3))
-
-        da2, dw3, db3 = linear_d(dz3, w3, a2, b3)
-        dz2 = relu_d(a2) * da2
-
-        da1, dw2, db2 = linear_d(dz2, w2, a1, b2)
-        dz1 = relu_d(a1)
-
-        _, dw1, db1 = linear_d(dz1, w1, X_train, b1)
-
         gradients = backpropagate(X_train, Y_train, weights, activations)
+        dw1, db1, dw2, db2, dw3, db3 = gradients
 
         assert(dw3.shape == w3.shape)
         assert(dw2.shape == w2.shape)
         assert(dw1.shape == w1.shape)
+
         # Update weights
         w3 -= learning_rate * dw3
         b3 -= learning_rate * db3
@@ -183,21 +152,16 @@ def model(X_train, Y_train, X_test, Y_test, num_iterations=100, learning_rate=0.
         b1 -= learning_rate * db1
 
     # Accuracy
-    z1 = linear(w1, X_test, b1)
-    a1 = relu(z1)
+    weights = w1, b1, w2, b2, w3, b3
+    cost, activations = forward_pass(X_test, Y_test, weights)
+    z1, a1, z2, a2, z3, a3 = activations
+    pred = np.round(a3)
 
-    z2 = linear(w2, a1, b2)
-    a2 = relu(z2)
-
-    z3 = linear(w3, a2, b3)
-    a3 = softmax(z3)
-
-    pred = np.zeros(a3.shape)
-    pred[a3.argmax(axis=0), np.arange(a3.shape[1])] = 1
+    # this is for cross entropy
+    # pred = np.zeros(a3.shape)
+    # pred[a3.argmax(axis=0), np.arange(a3.shape[1])] = 1
 
     acc = np.mean(pred == Y_test)
-    print(pred.shape)
-    print(Y_test.shape)
     # print(pred == Y_test)
     print('Accuracy:', acc)
 
