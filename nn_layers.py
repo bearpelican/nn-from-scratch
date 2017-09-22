@@ -2,8 +2,9 @@ import numpy as np
 import load_data
 import copy
 
-# Model setup
+class 
 
+# Model setup
 def initialize_weights(n_x, n_h):
     w = np.random.randn(n_h, n_x) * xavier_initialization(n_x)
     b = np.zeros((n_h, 1), dtype=np.float32)
