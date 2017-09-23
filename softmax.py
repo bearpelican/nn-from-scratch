@@ -1,6 +1,16 @@
 import numpy as np
 
-def softmax_grad(s):
+# Softmax activation function
+def softmax(z):
+    # Shift z values so highest value is 0
+    # Must stabilize as exp can get out of control
+    z_norm = z - np.max(z)
+    exp = np.exp(z_norm)
+    return exp / np.sum(exp, axis=0, keepdims=True)
+
+
+# Softmax gradient using jacobian
+def softmax_grad_simple(s):
     # input s is softmax value of the original input x. Its shape is (1,n)
     # e.i. s = np.array([0.3,0.7]), x = np.array([0,1])
 
@@ -15,21 +25,14 @@ def softmax_grad(s):
                 jacobian_m[i][j] = -s[i]*s[j]
     return jacobian_m
 
-def softmax_grad_j(softmax):
+
+# Vectorized version of softmax gradient
+def softmax_grad(softmax):
     s = softmax.reshape(-1,1)
     return np.diagflat(s) - np.dot(s, s.T)
 
-def softmax_grad_m(z):
-    # Remember to reverse n_m and n_class
-    zt = z.T
-    n_m, n_class = zt.shape
-    s_grad = np.empty((n_m, n_class, n_class))
-    for i in range(zt.shape[0]):
-        row = zt[i]
-        soft_grad = softmax_gradient_eliben(row)
-        s_grad[i] = soft_grad
-    return s_grad
 
+# Implementation found here: https://github.com/eliben/deep-learning-samples/blob/master/softmax/softmax.py
 def softmax_gradient_eliben(z):
     """Computes the gradient of the softmax function.
     z: (T, 1) array of input values where the gradient is computed. T is the
@@ -44,63 +47,65 @@ def softmax_gradient_eliben(z):
     D = -np.outer(Sz, Sz) + np.diag(Sz.flatten())
     return D
 
-def softmax_grad_j_2(softmax):
-    m = softmax.shape[1]
-    for i in range(m):
-        s = softmax[:, i].reshape(-1,1)
-        asdf = np.diagflat(s) - np.dot(s, s.T)
-        print(asdf)
 
-def softmax_grad_3(probs):
+# Alternative softmax solution:
+# https://stackoverflow.com/questions/45949141/compute-a-jacobian-matrix-from-scratch-in-python
+def softmax_grad_v3(probs):
     n_elements = probs.shape[0]
     jacobian = probs[:, np.newaxis] * (np.eye(n_elements) - probs[np.newaxis, :])
     return jacobian
 
-def softmax(z):
-    # Shift z values so highest value is 0
-    # Must stabilize as exp can get out of control
-    z_norm = z - np.max(z)
-    exp = np.exp(z_norm)
-    return exp / np.sum(exp, axis=0, keepdims=True)
+
+# (n_class, n_class, n_m_examples)
+# Finds softmax for m training examples
+def softmax_grad_mexamples(z):
+    n_class, n_m = z.shape
+    s_grad = np.empty((n_class, n_class, n_m))
+    for i in range(z.shape[1]):
+        soft_grad = softmax_grad(z[:, i])
+        s_grad[:, :, i] = soft_grad
+    return s_grad
 
 
-# x = np.array([[0, 1], [1, 0], [0, 1]])
-x = np.array([1, 2, 3, 4])
+# Finds softmax gradient for m training examples - transposed version for clarity
+def softmax_grad_mexamples_transpose(z):
+    # (n_m x n_class) matrix - y class per m row
+    n_m, n_class = z.shape
+    s_grad = np.empty((n_m, n_class, n_class))
+    for i in range(z.shape[0]):
+        row = z[i]
+        sgr = softmax_grad(row)
+        s_grad[i] = sgr
+    return s_grad
+
+
+# x = np.array([1, 2, 3, 4])
 #
-sm = softmax(x)
-print(sm)
-
-sm_g_j = softmax_grad_j(sm)
-print(sm_g_j)
-
-
-sm_g_j = softmax_gradient_eliben(x)
-print(sm_g_j)
+# sm = softmax(x)
+# print(sm)
 #
-# # softmax_grad_j_2(sm)
+# sm_g_j = softmax_grad(sm)
+# print(sm_g_j)
 #
-# print('Newest grad 3')
-# print(softmax_grad_3(sm))
-
-sm_g = softmax_grad(sm)
-print(sm_g)
+#
+# sm_g_j = softmax_gradient_eliben(x)
+# print(sm_g_j)
 
 
-# sm_g = softmax_grad_j_2(sm)
-# print(sm_g)
-
-
-# x = np.array([[0, 1], [1, 0], [0, 1]])
-# print(np.diag(x).shape)
-# print(np.diag(x.T).shape)
-# print(np.dot(x, x.T).shape)
-# print(np.dot(x.T, x).shape)
 
 z = np.array([[1, 2, 3, 4], [2, 2, 2, 2], [0, 1, 0, 1]]).T
 print('Grad m')
-sgm = softmax_grad_m(z)
+sgm2 = softmax_grad_mexamples_transpose(z.T).T
+print(sgm2)
+
+sgm = softmax_grad_mexamples(z)
 print(sgm)
+
+
 
 # dcost_step = binary_cross_entropy_d(Y_train, a3)
 # a3_d = sigmoid_d(a3)
 # dz3_step = a3_d * dcost_step
+
+
+

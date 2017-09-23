@@ -166,13 +166,26 @@ def softmax_d(z):
     # No idea how to implement this. See softmax.py
     return None
 
+# (n_class, n_class, n_m_examples)
+# Finds softmax for m training examples
+def softmax_d(z):
+    # Vectorized version of softmax gradient
+    def softmax_grad(softmax):
+        s = softmax.reshape(-1, 1)
+        return np.diagflat(s) - np.dot(s, s.T)
+    
+    n_class, n_m = z.shape
+    s_grad = np.empty((n_class, n_class, n_m))
+    for i in range(z.shape[1]):
+        s_grad[:, :, i] = softmax_grad(z[:, i])
+    return s_grad
+
 def sigmoid(z):
     s = 1 / (1 + np.exp(-z))
     return s
 
 
 def sigmoid_d(z):
-    # a must be sigmoid activated
     return z * (1 - z)
 
 def forward_pass(X, Y, weights):
