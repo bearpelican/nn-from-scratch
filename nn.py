@@ -48,9 +48,38 @@ def softmax(z):
     return exp / np.sum(exp, axis=0, keepdims=True)
 
 
-def softmax_d(z):
-    # No idea how to implement this. See softmax.py
-    return None
+
+def softmax_d(softmax):
+    s = softmax.reshape(-1,1)
+    return np.diagflat(s) - np.dot(s, s.T)
+
+# def softmax_d(z):
+#     Sz = softmax(z)
+#     D = -np.outer(Sz, Sz) + np.diag(Sz.flatten())
+#     return D
+
+
+# def softmax_d_m(z):
+#     # Remember to reverse n_m and n_class
+#     zt = z.T
+#     n_m, n_class = zt.shape
+#     s_grad = np.empty((n_m, n_class, n_class))
+#     for i in range(zt.shape[0]):
+#         row = zt[i]
+#         soft_grad = softmax_d(row)
+#         s_grad[i] = soft_grad
+#     return s_grad.T
+
+def softmax_d_m(z):
+    # Remember to reverse n_m and n_class
+    n_class, n_m = z.shape
+    s_grad = np.empty((n_class, n_class, n_m))
+    for i in range(z.shape[1]):
+        row = z[:, i]
+        soft_grad = softmax_d(row)
+        s_grad[:, :, i] = soft_grad
+    return s_grad
+
 
 def sigmoid(z):
     s = 1 / (1 + np.exp(-z))
@@ -109,6 +138,15 @@ def backpropagate(X, Y, weights, activations):
     z1, a1, z2, a2, z3, a3 = activations
 
     dz3 = a3 - Y
+
+    cost_d = categorical_cross_entropy_d(Y, a3)
+    a3_d = softmax_d_m(a3)
+    print('A3', a3.shape)
+    print(cost_d.shape)
+    print(a3_d.shape)
+    cost_d_r = cost_d.reshape((cost_d.shape[0], 1, cost_d.shape[1]))
+    dz3_step = np.einsum('ijk,jyk->iyk', a3_d, cost_d_r)
+    dz3_step_r = dz3_step.reshape((dz3_step.shape[0], dz3_step.shape[2]))
 
     da2, dw3, db3 = linear_d(dz3, w3, a2, b3)
     dz2 = relu_d(a2) * da2

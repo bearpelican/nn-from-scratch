@@ -2,13 +2,135 @@ import numpy as np
 import load_data
 import copy
 
-class 
 
-# Model setup
+class NNLayer:
+    # n_x = number of inputs (from previous layer)
+    # n_h = number of hidden units per layer
+    def __init__(self, n_x, n_h):
+        self.n_x = n_x
+        self.n_h = n_h
+        self.w, self.b = initialize_weights(n_x, n_h)
+        self.z = None
+        self.a = None
+        self.a_prev = None
+        self.dw = None
+        self.db = None
+        self.dz = None
+
+    def forward(self, a_prev):
+        # z = linear computation
+        # a = activation
+        self.z = linear(self.w, a_prev, self.b)
+        self.a = self.activation(self.z)
+        self.a_prev = a_prev
+        return self.a
+
+    def activation(self, z):
+        raise NotImplementedError  # you want to override this on the child classes
+
+    def linear_d(self, l_next):
+        raise NotImplementedError  # you want to override this on the child classes
+
+    def update_weights(self):
+        pass
+
+    def backward(self, l_next):
+        # use activation from previous layer and return new activation
+        # save a and z values
+        dz = self.linear_d(l_next)
+        _, m = self.a_prev.shape
+        self.dw = 1 / m * np.dot(dz, self.a_prev.T)  # (n_h, m) * (m, n_x)
+        self.db = np.mean(dz, axis=1, keepdims=True)  # (n_h, m) / m
+        self.dz = dz
+
+        # dz3 = a3 - Y
+        # _, m = a2.shape
+        # dw3 = 1 / m * np.dot(dz3, a2.T)  # (n_h, m) * (m, n_x)
+        # db3 = np.mean(dz3, axis=1, keepdims=True)  # (n_h, m) / m
+        # # da2, dw3, db3 = linear_d(dz3, w3, a2)
+        #
+        # _, m = a1.shape
+        # da2 = np.dot(w3.T, dz3)  # (n_x, n_h) * (n_h, m)
+        # dz2 = relu_d(a2) * da2
+        # dw2 = 1 / m * np.dot(dz2, a1.T)  # (n_h, m) * (m, n_x)
+        # db2 = np.mean(dz2, axis=1, keepdims=True)  # (n_h, m) / m
+        # # da1, dw2, db2 = linear_d(dz2, w2, a1)
+        #
+        # _, m = X.shape
+        # da1 = np.dot(w2.T, dz2)  # (n_x, n_h) * (n_h, m)
+        # dz1 = relu_d(a1) * da1
+        # dw1 = 1 / m * np.dot(dz1, X.T)  # (n_h, m) * (m, n_x)
+        # db1 = np.mean(dz1, axis=1, keepdims=True)  # (n_h, m) / m
+        # # _, dw1, db1 = linear_d(dz1, w1, X)
+
+
+class HiddenLayer(NNLayer):
+    def linear_d(self, l_next):
+        w_next = l_next.w
+        dz_next = l_next.dz
+        da = np.dot(w_next.T, dz_next)  # (n_x, n_h) * (n_h, m)
+        dz = self.activation_d(self.a) * da
+        return dz
+
+    def activation(self, z):
+        raise NotImplementedError  # you want to override this on the child classes
+
+    def activation_d(self, a):
+        raise NotImplementedError  # you want to override this on the child classes
+
+
+class RELU(HiddenLayer):
+    def activation(self, z):
+        return np.maximum(z, 0)
+
+    def activation_d(self, a):
+        return np.int64(a > 0)
+
+
+class SigmoidH(HiddenLayer):
+    def activation(self, z):
+        s = 1 / (1 + np.exp(-z))
+        return s
+
+
+class OutputLayer(NNLayer):
+
+    def cost(self, y):
+        self.y = y
+        raise NotImplementedError  # you want to override this on the child classes
+
+    def linear_d(self, l_next):
+        return Y - self.a
+
+    def binary_cross_entropy(y, a):
+        cost = y * np.log(a) + (1 - y) * np.log(1 - a)
+        return - np.mean(cost)
+
+    def binary_cross_entropy_d(y, a):
+        # cost_d = y / a + (1 - y) / (1 - a)
+        cost_d = y - a / (y * (1 - y))  # same as above
+        return - cost_d
+
+
+class Softmax(OutputLayer):
+    def cost(self, y):
+        return self.categorical_cross_entropy_d(y, self.a)
+
+    @staticmethod
+    def categorical_cross_entropy(y, a):
+        cost = np.sum(y * np.log(a), axis=1, keepdims=True)
+        return - np.mean(cost)
+
+    @staticmethod
+    def categorical_cross_entropy_d(y, a3):
+        return - (y / a3)
+
+class SigmoidBinary(OutputLayer):
+
 def initialize_weights(n_x, n_h):
     w = np.random.randn(n_h, n_x) * xavier_initialization(n_x)
     b = np.zeros((n_h, 1), dtype=np.float32)
-    return (w, b)
+    return w, b
 
 
 def xavier_initialization(n_x):
@@ -20,8 +142,8 @@ def linear(w, x, b):
     return np.dot(w, x) + b
 
 
-def linear_d(dz, w, a_prev, b):
-    # b = (n_h, 1)
+def linear_d(dz, w, a_prev):
+    # b = (n_h, 1) - bias is always dz. no need to pass in as param
     # w = (n_h, n_x)
     # dz = (n_h, m)
     # a = (n_x, m)
@@ -31,15 +153,6 @@ def linear_d(dz, w, a_prev, b):
     dw = 1 / m * np.dot(dz, a_prev.T)    # (n_h, m) * (m, n_x)
     db = np.mean(dz, axis=1, keepdims=True)     # (n_h, m) / m
     return da_prev, dw, db
-
-
-def relu(z):
-    return np.maximum(z, 0)
-
-
-def relu_d(a):
-    return np.int64(a > 0)
-
 
 def softmax(z):
     # Shift z values so highest value is 0
@@ -62,31 +175,6 @@ def sigmoid_d(z):
     # a must be sigmoid activated
     return z * (1 - z)
 
-#
-def compute_cost(Y, z):
-    return - np.mean(Y * np.log(z) + (1 - Y) * np.log(1 - z))
-
-
-def categorical_cross_entropy(y, a):
-    cost = np.sum(y * np.log(a), axis=1, keepdims=True)
-    return - np.mean(cost)
-
-def categorical_cross_entropy_d(y, a3):
-    # cost_d = y / a3 + (1 - y) / (1 - a3)
-    # return - cost_d
-    return - (y / a3)
-
-
-def binary_cross_entropy(y, a):
-    cost = y * np.log(a) + (1 - y) * np.log(1 - a)
-    return - np.mean(cost)
-
-
-def binary_cross_entropy_d(y, a):
-    # cost_d = y / a + (1 - y) / (1 - a)
-    cost_d = y - a / (y * (1 - y))  # same as above
-    return - cost_d
-
 def forward_pass(X, Y, weights):
     w1, b1, w2, b2, w3, b3 = weights
     # forward pass
@@ -104,20 +192,45 @@ def forward_pass(X, Y, weights):
     return (cost, (z1, a1, z2, a2, z3, a3))
 
 
+def backprop(X, Y, weights, activations):
+    w1, b1, w2, b2, w3, b3 = weights
+    z1, a1, z2, a2, z3, a3 = activations
+
+    dz3 = a3 - Y
+    _, m = a2.shape
+    dw3 = 1 / m * np.dot(dz3, a2.T)    # (n_h, m) * (m, n_x)
+    db3 = np.mean(dz3, axis=1, keepdims=True)     # (n_h, m) / m
+    # da2, dw3, db3 = linear_d(dz3, w3, a2)
+
+    _, m = a1.shape
+    da2 = np.dot(w3.T, dz3)   # (n_x, n_h) * (n_h, m)
+    dz2 = relu_d(a2) * da2
+    dw2 = 1 / m * np.dot(dz2, a1.T)    # (n_h, m) * (m, n_x)
+    db2 = np.mean(dz2, axis=1, keepdims=True)     # (n_h, m) / m
+    # da1, dw2, db2 = linear_d(dz2, w2, a1)
+
+    _, m = X.shape
+    da1 = np.dot(w2.T, dz2)   # (n_x, n_h) * (n_h, m)
+    dz1 = relu_d(a1) * da1
+    dw1 = 1 / m * np.dot(dz1, X.T)    # (n_h, m) * (m, n_x)
+    db1 = np.mean(dz1, axis=1, keepdims=True)     # (n_h, m) / m
+    # _, dw1, db1 = linear_d(dz1, w1, X)
+
+    return dw1, db1, dw2, db2, dw3, db3
 
 def backpropagate(X, Y, weights, activations):
     w1, b1, w2, b2, w3, b3 = weights
     z1, a1, z2, a2, z3, a3 = activations
 
     dz3 = a3 - Y
+    da2, dw3, db3 = linear_d(dz3, w3, a2)
 
-    da2, dw3, db3 = linear_d(dz3, w3, a2, b3)
     dz2 = relu_d(a2) * da2
+    da1, dw2, db2 = linear_d(dz2, w2, a1)
 
-    da1, dw2, db2 = linear_d(dz2, w2, a1, b2)
     dz1 = relu_d(a1) * da1
+    _, dw1, db1 = linear_d(dz1, w1, X)
 
-    _, dw1, db1 = linear_d(dz1, w1, X, b1)
     return dw1, db1, dw2, db2, dw3, db3
 
 # Let's create a model with 2 hidden layers with 100 units
