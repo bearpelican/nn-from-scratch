@@ -109,3 +109,17 @@ print(sgm)
 
 
 
+'''
+cost_d = categorical_cross_entropy_d(Y, a3)
+a3_d = softmax_d_m(a3)
+print('A3', a3.shape)
+print(cost_d.shape)
+print(a3_d.shape)
+cost_d_r = cost_d.reshape((cost_d.shape[0], 1, cost_d.shape[1]))
+dz3_step = np.einsum('ijk,jyk->iyk', a3_d, cost_d_r)
+dz3_step_r = dz3_step.reshape((dz3_step.shape[0], dz3_step.shape[2]))
+
+dz3_test = np.einsum('ijk,jk->ik', a3_d, cost_d)
+
+da2, dw3, db3 = linear_d(dz3, w3, a2, b3)
+'''

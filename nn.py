@@ -148,6 +148,8 @@ def backpropagate(X, Y, weights, activations):
     dz3_step = np.einsum('ijk,jyk->iyk', a3_d, cost_d_r)
     dz3_step_r = dz3_step.reshape((dz3_step.shape[0], dz3_step.shape[2]))
 
+    dz3_test = np.einsum('ijk,jk->ik', a3_d, cost_d)
+
     da2, dw3, db3 = linear_d(dz3, w3, a2, b3)
     dz2 = relu_d(a2) * da2
 

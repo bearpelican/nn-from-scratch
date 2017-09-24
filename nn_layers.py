@@ -64,6 +64,172 @@ class NNLayer:
         # # _, dw1, db1 = linear_d(dz1, w1, X)
 
 
+class Unit:
+    def __init__(self, n_x, n_h):
+        self.n_x = n_x
+        self.n_h = n_h
+
+    def activation(self, z):
+        raise NotImplementedError  # you want to override this on the child classes
+
+    def derivative(self, z):
+        raise NotImplementedError  # you want to override this on the child classes
+
+
+class LinearUnit(Unit):
+    def __init__(self, n_x, n_h):
+        Unit.__init__(self, n_x, n_h)
+        self.w, self.b = initialize_weights(n_x, n_h)
+        self.z = None
+        self.x = None # a_prev
+        self.dw = None
+        self.db = None
+        # self.dz = None # dz is calculated by activation layer
+        self.dx = None # a_prev
+
+    def activation(self, x):
+        # (n_h, n_x) * (n_x, m) + (n_h, 1) = (n_h, m)
+        def linear(w, x, b):
+            # (n_h, n_x) * (n_x, m) + (n_h, 1) = (n_h, m)
+            return np.dot(w, x) + b
+        self.x = x
+        self.z = linear(self.w, x, self.b)
+        return self.z
+
+    def derivative(self, dz):
+        def linear_d(_dz, w, x):
+            # b = (n_h, 1) - bias is always dz. no need to pass in as param
+            # w = (n_h, n_x)
+            # dz = (n_h, m)
+            # x = (n_x, m) AKA a_previous
+            _, m = x.shape
+
+            dx = np.dot(w.T, _dz)  # (n_x, n_h) * (n_h, m)
+            dw = 1 / m * np.dot(_dz, x.T)  # (n_h, m) * (m, n_x)
+            db = np.mean(_dz, axis=1, keepdims=True)  # (n_h, m) / m
+            return dx, dw, db
+        self.dx, self.dw, self.db = linear_d(dz, self.w, self.dx)
+        return self.dx
+
+
+class ActivationUnit(Unit):
+    def __init__(self, n_x, n_h):
+        Unit.__init__(self, n_x, n_h)
+        self.a = None
+        self.da = None
+
+        # dz is in the Activation Unit instead of Linear Unit
+        # This makes it easier to calculate since it depends on a and da
+        # Also, we the type of multiplication depends on the activation - See differences between RELU and Softmax
+        self.dz = None
+
+    def activation(self, z):
+        raise NotImplementedError  # you want to override this on the child classes
+
+    def derivative(self, da): # AKA dx of linear layer
+        raise NotImplementedError  # you want to override this on the child classes
+
+
+class RELU(ActivationUnit):
+    def activation(self, z):
+        def relu(_z):
+            return np.maximum(_z, 0)
+        self.a = relu(z)
+        return self.a
+
+    def derivative(self, da):
+        def relu_d(a):
+            return np.int64(a > 0)
+        self.dz = da * relu_d(self.a)
+        return self.dz
+
+
+class Sigmoid(ActivationUnit):
+    def activation(self, z):
+        def sigmoid(_z):
+            return 1 / (1 + np.exp(-_z))
+        self.a = sigmoid(z)
+        return self.a
+
+    def derivative(self, da):
+        def sigmoid_d(a):
+            return a * (1 - a)
+        self.dz = da * sigmoid_d(self.a)
+        return self.dz
+
+
+class Softmax(ActivationUnit):
+    def activation(self, z):
+        def softmax(_z):
+            # Shift z values so highest value is 0
+            # Must stabilize as exp can get out of control
+            z_norm = _z - np.max(_z)
+            exp = np.exp(z_norm)
+            return exp / np.sum(exp, axis=0, keepdims=True)
+
+        self.a = softmax(z)
+        return self.a
+
+    def derivative(self, da):
+        # (n_class, n_class, n_m_examples)
+        # Finds softmax for m training examples
+        def softmax_d(a):
+            # Softmax derivative function (Jacobian)
+            def softmax_grad(softmax):
+                s = softmax.reshape(-1, 1)
+                return np.diagflat(s) - np.dot(s, s.T)
+            # Find softmax for each m example
+            n_class, n_m = a.shape
+            s_grad = np.empty((n_class, n_class, n_m))
+            for i in range(a.shape[1]):
+                s_grad[:, :, i] = softmax_grad(a[:, i])
+            return s_grad
+        s_d = softmax_d(self.a)
+        self.dz = np.einsum('ijk,jk->ik', s_d, da)
+        return self.dz
+
+
+class Cost:
+    def cost(self, y, a):
+        # y = target (actual truth)
+        # a = prediction
+        raise NotImplementedError  # you want to override this on the child classes
+
+    def cost_d(self, y, a):
+        # y = target (actual truth)
+        # a = prediction
+        raise NotImplementedError  # you want to override this on the child classes
+
+
+class CategoricalCrossEntropy(Cost):
+    def cost(self, y, a):
+        def categorical_cross_entropy(_y, _a):
+            cost = np.sum(_y * np.log(_a), axis=1, keepdims=True)
+            return - np.mean(cost)
+        return categorical_cross_entropy(y, a)
+
+    def cost_d(self, y, a):
+        def categorical_cross_entropy_d(_y, _a):
+            return - (_y / _a)
+        return categorical_cross_entropy_d(y, a)
+
+
+class BinaryCrossEntropy(Cost):
+    def cost(self, y, a):
+        def binary_cross_entropy(_y, _a):
+            cost = _y * np.log(_a) + (1 - _y) * np.log(1 - _a)
+            return - np.mean(cost)
+        return binary_cross_entropy(y, a)
+
+    def cost_d(self, y, a):
+        def binary_cross_entropy_d(_y, _a):
+            # cost_d = y / a + (1 - y) / (1 - a)
+            cost_d = _y - _a / (_y * (1 - _y))  # same as above
+            return - cost_d
+
+        return binary_cross_entropy_d(y, a)
+
+
 class HiddenLayer(NNLayer):
     def linear_d(self, l_next):
         w_next = l_next.w
@@ -79,20 +245,6 @@ class HiddenLayer(NNLayer):
         raise NotImplementedError  # you want to override this on the child classes
 
 
-class RELU(HiddenLayer):
-    def activation(self, z):
-        return np.maximum(z, 0)
-
-    def activation_d(self, a):
-        return np.int64(a > 0)
-
-
-class SigmoidH(HiddenLayer):
-    def activation(self, z):
-        s = 1 / (1 + np.exp(-z))
-        return s
-
-
 class OutputLayer(NNLayer):
 
     def cost(self, y):
@@ -102,30 +254,7 @@ class OutputLayer(NNLayer):
     def linear_d(self, l_next):
         return Y - self.a
 
-    def binary_cross_entropy(y, a):
-        cost = y * np.log(a) + (1 - y) * np.log(1 - a)
-        return - np.mean(cost)
 
-    def binary_cross_entropy_d(y, a):
-        # cost_d = y / a + (1 - y) / (1 - a)
-        cost_d = y - a / (y * (1 - y))  # same as above
-        return - cost_d
-
-
-class Softmax(OutputLayer):
-    def cost(self, y):
-        return self.categorical_cross_entropy_d(y, self.a)
-
-    @staticmethod
-    def categorical_cross_entropy(y, a):
-        cost = np.sum(y * np.log(a), axis=1, keepdims=True)
-        return - np.mean(cost)
-
-    @staticmethod
-    def categorical_cross_entropy_d(y, a3):
-        return - (y / a3)
-
-class SigmoidBinary(OutputLayer):
 
 def initialize_weights(n_x, n_h):
     w = np.random.randn(n_h, n_x) * xavier_initialization(n_x)
@@ -136,57 +265,6 @@ def initialize_weights(n_x, n_h):
 def xavier_initialization(n_x):
     return 2 / n_x
 
-
-def linear(w, x, b):
-    # (n_h, n_x) * (n_x, m) + (n_h, 1) = (n_h, m)
-    return np.dot(w, x) + b
-
-
-def linear_d(dz, w, a_prev):
-    # b = (n_h, 1) - bias is always dz. no need to pass in as param
-    # w = (n_h, n_x)
-    # dz = (n_h, m)
-    # a = (n_x, m)
-    _, m = a_prev.shape
-
-    da_prev = np.dot(w.T, dz)   # (n_x, n_h) * (n_h, m)
-    dw = 1 / m * np.dot(dz, a_prev.T)    # (n_h, m) * (m, n_x)
-    db = np.mean(dz, axis=1, keepdims=True)     # (n_h, m) / m
-    return da_prev, dw, db
-
-def softmax(z):
-    # Shift z values so highest value is 0
-    # Must stabilize as exp can get out of control
-    z_norm = z - np.max(z)
-    exp = np.exp(z_norm)
-    return exp / np.sum(exp, axis=0, keepdims=True)
-
-
-def softmax_d(z):
-    # No idea how to implement this. See softmax.py
-    return None
-
-# (n_class, n_class, n_m_examples)
-# Finds softmax for m training examples
-def softmax_d(z):
-    # Vectorized version of softmax gradient
-    def softmax_grad(softmax):
-        s = softmax.reshape(-1, 1)
-        return np.diagflat(s) - np.dot(s, s.T)
-    
-    n_class, n_m = z.shape
-    s_grad = np.empty((n_class, n_class, n_m))
-    for i in range(z.shape[1]):
-        s_grad[:, :, i] = softmax_grad(z[:, i])
-    return s_grad
-
-def sigmoid(z):
-    s = 1 / (1 + np.exp(-z))
-    return s
-
-
-def sigmoid_d(z):
-    return z * (1 - z)
 
 def forward_pass(X, Y, weights):
     w1, b1, w2, b2, w3, b3 = weights
@@ -210,20 +288,31 @@ def backprop(X, Y, weights, activations):
     z1, a1, z2, a2, z3, a3 = activations
 
     dz3 = a3 - Y
+
+    cost_d = categorical_cross_entropy_d(Y, a3)
+    a3_d = softmax_d_m(a3)
+    print('A3', a3.shape)
+    print(cost_d.shape)
+    print(a3_d.shape)
+    cost_d_r = cost_d.reshape((cost_d.shape[0], 1, cost_d.shape[1]))
+    dz3_step = np.einsum('ijk,jyk->iyk', a3_d, cost_d_r)
+    dz3_step_r = dz3_step.reshape((dz3_step.shape[0], dz3_step.shape[2]))
+
+
     _, m = a2.shape
     dw3 = 1 / m * np.dot(dz3, a2.T)    # (n_h, m) * (m, n_x)
     db3 = np.mean(dz3, axis=1, keepdims=True)     # (n_h, m) / m
+    da2 = np.dot(w3.T, dz3)   # (n_x, n_h) * (n_h, m)
     # da2, dw3, db3 = linear_d(dz3, w3, a2)
 
     _, m = a1.shape
-    da2 = np.dot(w3.T, dz3)   # (n_x, n_h) * (n_h, m)
     dz2 = relu_d(a2) * da2
     dw2 = 1 / m * np.dot(dz2, a1.T)    # (n_h, m) * (m, n_x)
     db2 = np.mean(dz2, axis=1, keepdims=True)     # (n_h, m) / m
+    da1 = np.dot(w2.T, dz2)   # (n_x, n_h) * (n_h, m)
     # da1, dw2, db2 = linear_d(dz2, w2, a1)
 
     _, m = X.shape
-    da1 = np.dot(w2.T, dz2)   # (n_x, n_h) * (n_h, m)
     dz1 = relu_d(a1) * da1
     dw1 = 1 / m * np.dot(dz1, X.T)    # (n_h, m) * (m, n_x)
     db1 = np.mean(dz1, axis=1, keepdims=True)     # (n_h, m) / m
