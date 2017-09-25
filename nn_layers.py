@@ -4,70 +4,85 @@ import copy
 
 
 class NNLayer:
-    # n_x = number of inputs (from previous layer)
-    # n_h = number of hidden units per layer
-    def __init__(self, n_x, n_h):
+    """NN forward propagation
+
+    Attributes:
+        n_x: number of inputs (from previous layer)
+        n_h: number of hidden units per layer
+    """
+    def __init__(self, n_x, n_h, activation, learning_rate=1):
         self.n_x = n_x
         self.n_h = n_h
-        self.w, self.b = initialize_weights(n_x, n_h)
-        self.z = None
-        self.a = None
-        self.a_prev = None
-        self.dw = None
-        self.db = None
-        self.dz = None
+        self.linear_unit = LinearUnit(n_x, n_h)
+        self.activation = activation
+        self.learning_rate = learning_rate
 
-    def forward(self, a_prev):
-        # z = linear computation
-        # a = activation
-        self.z = linear(self.w, a_prev, self.b)
-        self.a = self.activation(self.z)
-        self.a_prev = a_prev
-        return self.a
+    def forward(self, x):
+        """NN forward propagation
 
-    def activation(self, z):
-        raise NotImplementedError  # you want to override this on the child classes
-
-    def linear_d(self, l_next):
-        raise NotImplementedError  # you want to override this on the child classes
+        Attributes:
+            x (n_x, n_h, n_m) matrix: layer input
+        """
+        z = self.linear_unit.activation(x) # linear computation
+        a = self.activation.activation(z) # non-linear activation
+        return a
 
     def update_weights(self):
-        pass
+        self.linear_unit.update_weights(self.learning_rate)
 
-    def backward(self, l_next):
-        # use activation from previous layer and return new activation
-        # save a and z values
-        dz = self.linear_d(l_next)
-        _, m = self.a_prev.shape
-        self.dw = 1 / m * np.dot(dz, self.a_prev.T)  # (n_h, m) * (m, n_x)
-        self.db = np.mean(dz, axis=1, keepdims=True)  # (n_h, m) / m
-        self.dz = dz
+    def backward(self, da):
+        """NN backward propagation
 
-        # dz3 = a3 - Y
-        # _, m = a2.shape
-        # dw3 = 1 / m * np.dot(dz3, a2.T)  # (n_h, m) * (m, n_x)
-        # db3 = np.mean(dz3, axis=1, keepdims=True)  # (n_h, m) / m
-        # # da2, dw3, db3 = linear_d(dz3, w3, a2)
-        #
-        # _, m = a1.shape
-        # da2 = np.dot(w3.T, dz3)  # (n_x, n_h) * (n_h, m)
-        # dz2 = relu_d(a2) * da2
-        # dw2 = 1 / m * np.dot(dz2, a1.T)  # (n_h, m) * (m, n_x)
-        # db2 = np.mean(dz2, axis=1, keepdims=True)  # (n_h, m) / m
-        # # da1, dw2, db2 = linear_d(dz2, w2, a1)
-        #
-        # _, m = X.shape
-        # da1 = np.dot(w2.T, dz2)  # (n_x, n_h) * (n_h, m)
-        # dz1 = relu_d(a1) * da1
-        # dw1 = 1 / m * np.dot(dz1, X.T)  # (n_h, m) * (m, n_x)
-        # db1 = np.mean(dz1, axis=1, keepdims=True)  # (n_h, m) / m
-        # # _, dw1, db1 = linear_d(dz1, w1, X)
+        Attributes:
+            da (n_x, n_h, n_m) matrix: derivative of activation from current layer (L). AKA dx(L+1)
+        Returns:
+            dx: AKA da(L-1)
+        """
+        dz = self.activation.derivative(da)
+        da = self.linear_unit.derivative(dz)
+        return da
+
+
+class OutputLayer(NNLayer):
+    def __init__(self, n_x, n_h, activation, cost, learning_rate=1):
+        NNLayer.__init__(n_x, n_h, activation, learning_rate)
+        self.cost = cost
+
+    def cost(self, y):
+        a = self.activation.a
+        return self.cost.cost(y, a)
+
+    def backward(self, y):
+        a = self.activation.a
+        dc = self.cost.derivative(y, a)
+        # same steps as normal NNLayer
+        dz = self.activation.derivative(dc)
+        da = self.linear_unit.derivative(dz)
+        return da
+
+
+class OutputLayerShortcut(OutputLayer):
+    def backward_shortcut(self, y):
+        a = self.activation.a
+        dz = y - a
+        self.activation.dz = dz
+        da = self.linear_unit.derivative(dz)
+        return da
+
+
+class SoftmaxCategoricalLayer(OutputLayer, OutputLayerShortcut):
+    def __init__(self, n_x, n_h, learning_rate=1):
+        OutputLayer.__init__(n_x, n_h, activation=Softmax(), cost=CategoricalCrossEntropy(), learning_rate=learning_rate)
+
+
+class SigmoidBinaryLayer(OutputLayer, OutputLayerShortcut):
+    def __init__(self, n_x, n_h, learning_rate=1):
+        OutputLayer.__init__(n_x, n_h, activation=Sigmoid(), cost=BinaryCrossEntropy(), learning_rate=learning_rate)
 
 
 class Unit:
-    def __init__(self, n_x, n_h):
-        self.n_x = n_x
-        self.n_h = n_h
+    def __init__(self):
+        pass
 
     def activation(self, z):
         raise NotImplementedError  # you want to override this on the child classes
@@ -78,7 +93,7 @@ class Unit:
 
 class LinearUnit(Unit):
     def __init__(self, n_x, n_h):
-        Unit.__init__(self, n_x, n_h)
+        Unit.__init__(self)
         self.w, self.b = initialize_weights(n_x, n_h)
         self.z = None
         self.x = None # a_prev
@@ -111,22 +126,53 @@ class LinearUnit(Unit):
         self.dx, self.dw, self.db = linear_d(dz, self.w, self.dx)
         return self.dx
 
+    def update_weights(self, learning_rate):
+        self.w -= learning_rate * self.dw
+        self.b -= learning_rate * self.db
+
+
+def initialize_weights(n_x, n_h):
+    w = np.random.randn(n_h, n_x) * xavier_initialization(n_x)
+    b = np.zeros((n_h, 1), dtype=np.float32)
+    return w, b
+
+
+def xavier_initialization(n_x):
+    return 2 / n_x
+
 
 class ActivationUnit(Unit):
-    def __init__(self, n_x, n_h):
-        Unit.__init__(self, n_x, n_h)
-        self.a = None
-        self.da = None
+    """Abtract class for RELU, Sigmoid, Softmax activation functions. Combine with Linear Unit
 
-        # dz is in the Activation Unit instead of Linear Unit
-        # This makes it easier to calculate since it depends on a and da
-        # Also, we the type of multiplication depends on the activation - See differences between RELU and Softmax
+    Attributes:
+        a (n_x, n_h) matrix: activation of unit (L)
+        dz: derivative of linear unit (L).
+            Calculated inside Activation Unit as it depends on a and da
+            Type of multiplication depends on the activation - See differences between RELU and Softmax
+
+        !da: (AKA dx) Calculated in the Linear Unit
+    """
+    def __init__(self):
+        Unit.__init__(self)
+        self.a = None
         self.dz = None
 
     def activation(self, z):
+        """Activation unit Forward Step
+        Args:
+            z (n_x, n_h, m): calculation from linear unit (L)
+        Returns:
+            a: non-linear activation (L)
+        """
         raise NotImplementedError  # you want to override this on the child classes
 
-    def derivative(self, da): # AKA dx of linear layer
+    def derivative(self, da):  # AKA dx of linear layer
+        """Activation unit Forward Step
+        Args:
+            da (n_x, n_h, m): dx of linear layer (L + 1). Derivative of this activation unit
+        Returns:
+            dz: derivative of current linear unit (L)
+        """
         raise NotImplementedError  # you want to override this on the child classes
 
 
@@ -190,6 +236,16 @@ class Softmax(ActivationUnit):
 
 
 class Cost:
+    """Abtract class for loss functions.
+
+    Attributes:
+        c: cost between target Y and predicted A
+        dc: derivative of cost function
+    """
+    def __init__(self):
+        self.c = None
+        self.dc = None
+
     def cost(self, y, a):
         # y = target (actual truth)
         # a = prediction
@@ -206,12 +262,14 @@ class CategoricalCrossEntropy(Cost):
         def categorical_cross_entropy(_y, _a):
             cost = np.sum(_y * np.log(_a), axis=1, keepdims=True)
             return - np.mean(cost)
-        return categorical_cross_entropy(y, a)
+        self.c = categorical_cross_entropy(y, a)
+        return self.c
 
     def cost_d(self, y, a):
         def categorical_cross_entropy_d(_y, _a):
             return - (_y / _a)
-        return categorical_cross_entropy_d(y, a)
+        self.dc = categorical_cross_entropy_d(y, a)
+        return self.dc
 
 
 class BinaryCrossEntropy(Cost):
@@ -219,51 +277,16 @@ class BinaryCrossEntropy(Cost):
         def binary_cross_entropy(_y, _a):
             cost = _y * np.log(_a) + (1 - _y) * np.log(1 - _a)
             return - np.mean(cost)
-        return binary_cross_entropy(y, a)
+        self.c = binary_cross_entropy(y, a)
+        return self.c
 
     def cost_d(self, y, a):
         def binary_cross_entropy_d(_y, _a):
             # cost_d = y / a + (1 - y) / (1 - a)
             cost_d = _y - _a / (_y * (1 - _y))  # same as above
             return - cost_d
-
-        return binary_cross_entropy_d(y, a)
-
-
-class HiddenLayer(NNLayer):
-    def linear_d(self, l_next):
-        w_next = l_next.w
-        dz_next = l_next.dz
-        da = np.dot(w_next.T, dz_next)  # (n_x, n_h) * (n_h, m)
-        dz = self.activation_d(self.a) * da
-        return dz
-
-    def activation(self, z):
-        raise NotImplementedError  # you want to override this on the child classes
-
-    def activation_d(self, a):
-        raise NotImplementedError  # you want to override this on the child classes
-
-
-class OutputLayer(NNLayer):
-
-    def cost(self, y):
-        self.y = y
-        raise NotImplementedError  # you want to override this on the child classes
-
-    def linear_d(self, l_next):
-        return Y - self.a
-
-
-
-def initialize_weights(n_x, n_h):
-    w = np.random.randn(n_h, n_x) * xavier_initialization(n_x)
-    b = np.zeros((n_h, 1), dtype=np.float32)
-    return w, b
-
-
-def xavier_initialization(n_x):
-    return 2 / n_x
+        self.dc = binary_cross_entropy_d(y, a)
+        return self.dc
 
 
 def forward_pass(X, Y, weights):
@@ -290,13 +313,15 @@ def backprop(X, Y, weights, activations):
     dz3 = a3 - Y
 
     cost_d = categorical_cross_entropy_d(Y, a3)
-    a3_d = softmax_d_m(a3)
+    da3 = softmax_d_m(a3)
     print('A3', a3.shape)
     print(cost_d.shape)
-    print(a3_d.shape)
+    print(da3.shape)
     cost_d_r = cost_d.reshape((cost_d.shape[0], 1, cost_d.shape[1]))
-    dz3_step = np.einsum('ijk,jyk->iyk', a3_d, cost_d_r)
+    dz3_step = np.einsum('ijk,jyk->iyk', da3, cost_d_r)
     dz3_step_r = dz3_step.reshape((dz3_step.shape[0], dz3_step.shape[2]))
+
+    dz3_test = np.einsum('ijk,jk->ik', da3, cost_d)
 
 
     _, m = a2.shape
