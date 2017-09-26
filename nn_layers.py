@@ -11,6 +11,41 @@ class NNLayer:
         n_h: number of hidden units per layer
         activation: activation function
     """
+    def __init__(self):
+        self.shape = (0, 0)
+
+    def forward(self, x):
+        raise NotImplementedError  # you want to override this on the child classes
+
+    def add_l2_reg(self, lmbd):
+        pass
+
+    def get_weights(self):
+        return np.zeros(0), np.zeros(0)
+        # raise NotImplementedError  # you want to override this on the child classes
+
+    def get_gradients(self):
+        return np.zeros(0), np.zeros(0)
+        # raise NotImplementedError  # you want to override this on the child classes
+
+    def set_weights(self, w, b):
+        pass
+
+    def subtract_gradient_update(self, dw, db):
+        pass
+
+    def backward(self, da):
+        raise NotImplementedError  # you want to override this on the child classes
+
+
+class ActivationLayer(NNLayer):
+    """NN forward propagation
+
+    Attributes:
+        n_x: number of inputs (from previous layer)
+        n_h: number of hidden units per layer
+        activation: activation function
+    """
     def __init__(self, n_x, n_h, activation):
         self.shape = (n_h, n_x)
         self._linear_unit = LinearUnit(n_x, n_h)
@@ -63,9 +98,9 @@ class NNLayer:
         return dx
 
 
-class OutputLayer(NNLayer):
+class OutputLayer(ActivationLayer):
     def __init__(self, n_x, n_h, activation, cost_function):
-        NNLayer.__init__(self, n_x, n_h, activation)
+        ActivationLayer.__init__(self, n_x, n_h, activation)
         self.cost_function = cost_function
 
     def cost(self, y):
@@ -75,13 +110,13 @@ class OutputLayer(NNLayer):
     def backward(self, y):
         a = self._activation_unit.a
         dc = self.cost_function.cost_d(y, a)
-        # same steps as normal NNLayer
+        # same steps as normal ActivationLayer
         dz = self._activation_unit.derivative(dc)
         da = self._linear_unit.derivative(dz)
         return da
 
 
-class OutputLayerShortcut(NNLayer):
+class OutputLayerShortcut(ActivationLayer):
     def backward_shortcut(self, y):
         a = self._activation_unit.a
         dz = a - y
@@ -102,22 +137,20 @@ class SigmoidBinaryLayer(OutputLayer, OutputLayerShortcut):
 
 class DropoutLayer(NNLayer):
     def __init__(self, keep_prob):
-        NNLayer.__init__(self, 0, 0, Dropout(keep_prob))
+        NNLayer.__init__(self)
+        self._activation_unit = Dropout(keep_prob)
 
     def forward(self, x):
         a = self._activation_unit.activation(x) # non-linear activation
         return a
-
-    def add_l2_reg(self, lmbd):
-        pass
 
     def backward(self, da):
         return da
 
 
 class ConvLayer(NNLayer):
-    def __init__(self, n_h, n_x, n_filters, filter_size, stride, zero_padding, activation):
-        NNLayer.__init__(n_h, n_x, activation)
+    def __init__(self, n_filters, filter_size, stride, zero_padding):
+        NNLayer.__init__(self)
         self.k = n_filters
         self.f = filter_size
         self.s = stride
@@ -163,14 +196,17 @@ class ConvLayer(NNLayer):
                 output[i, j, :, :] = stride_value
 
 
-
-
 class FlattenLayer(NNLayer):
-    def __init__(self, n_h, n_x, filter, stride, zero_padding, activation):
-        NNLayer.__init__(n_h, n_x, activation)
-        self.k = filter
-        self.s = stride
-        self.p = zero_padding
+    def __init__(self):
+        self.original_shape = []
+
+    def forward(self, x):
+        self.original_shape = x.shape
+        return flat_array(x)
+
+    def backward(self, da):
+        return da.reshape(self.shape)
+
 
 class Unit:
     def __init__(self):
@@ -615,8 +651,8 @@ def test_model(X_train, Y_train, X_test, Y_test, num_iterations=50, learning_rat
     # n_y = 1
     n_h1, n_h2 = [100, 100]
 
-    layer1 = NNLayer(n_x, n_h1, activation=RELU())
-    layer2 = NNLayer(n_h1, n_h2, activation=RELU())
+    layer1 = ActivationLayer(n_x, n_h1, activation=RELU())
+    layer2 = ActivationLayer(n_h1, n_h2, activation=RELU())
     layer3 = DropoutLayer(.8)
     layer4 = SoftmaxCategoricalLayer(n_h2, n_y)
     nnlayers = [layer1, layer2, layer3, layer4]
@@ -676,8 +712,8 @@ def gradient_check(X, Y):
     n_y = 1
     n_h1, n_h2 = [10, 10]
 
-    layer1 = NNLayer(n_x, n_h1, activation=RELU())
-    layer2 = NNLayer(n_h1, n_h2, activation=RELU())
+    layer1 = ActivationLayer(n_x, n_h1, activation=RELU())
+    layer2 = ActivationLayer(n_h1, n_h2, activation=RELU())
     layer3 = SigmoidBinaryLayer(n_h2, n_y)
     nnlayers = [layer1, layer2, layer3]
 
