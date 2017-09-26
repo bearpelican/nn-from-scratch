@@ -28,6 +28,12 @@ class NNLayer:
         a = self.activation.activation(z) # non-linear activation
         return a
 
+    def add_l2_reg(self, lmbd):
+        if lmbd is 0:
+            return
+        m = self.linear_unit.w.shape[-1]
+        self.linear_unit.w += lmbd / m * self.linear_unit.w
+
     def update_weights(self, learning_rate):
         self.linear_unit.update_weights(learning_rate)
 
@@ -290,7 +296,7 @@ class BinaryCrossEntropy(Cost):
         return self.dc
 
 
-def forward_pass(X, Y, nnlayers):
+def forward_pass(X, Y, nnlayers, lmbd=0):
     hidden_layers = nnlayers[:-1]
     output_layer = nnlayers[-1]
 
@@ -300,7 +306,19 @@ def forward_pass(X, Y, nnlayers):
 
     a = output_layer.forward(input_x)
     cost = output_layer.cost(Y)
+
     return cost, a
+
+
+def l2_reg_cost(nnlayers, y, lmbd):
+    if lmbd is 0:
+        return 0
+    m = y.shape[-1]
+    weights = get_weights(nnlayers, include_biases=False)
+    weights = flat_array(weights)
+    cost = lmbd / (m * 2) * np.sum(weights ** 2)
+    print('L2 cost:', cost)
+    return cost
 
 
 def backprop_shortcut(Y, nnlayers):
@@ -323,6 +341,11 @@ def update_weights(nnlayers, learning_rate):
         layer.update_weights(learning_rate)
 
 
+def add_l2_reg(nnlayers, lmbd):
+    for layer in nnlayers:
+        layer.add_l2_reg(lmbd)
+
+
 class Model:
     def __init__(self, X_train, Y_train, X_test, Y_test, nnlayers):
         self.X_train = X_train
@@ -331,15 +354,22 @@ class Model:
         self.Y_test = Y_test
         self.nnlayers = nnlayers
 
-    def run(self, num_iterations=50, learning_rate=0.01):
+    def run(self, num_iterations=50, learning_rate=0.01, lmbd=0):
+        use_l2_reg = lmbd > 0
         for i in range(num_iterations):
             # forward pass
             cost, _ = forward_pass(self.X_train, self.Y_train, self.nnlayers)
+            l2_cost = l2_reg_cost(self.nnlayers, self.Y_train, lmbd)
+            cost += l2_cost
             print('Cost:', cost)
 
             # backprop(Y_train, nnlayers)
             backprop_shortcut(self.Y_train, self.nnlayers)
 
+            # l2 regularization
+            add_l2_reg(self.nnlayers, lmbd)
+
+            # update layer weights
             update_weights(self.nnlayers, learning_rate)
 
         acc = self.get_accuracy()
@@ -351,7 +381,7 @@ class Model:
             y = self.Y_test
 
         # Accuracy
-        cost, a_L = forward_pass(x, y, self.nnlayers)
+        cost, a_L = forward_pass(x, y, self.nnlayers, lmbd=0)
         # pred = np.round(a3)
 
         # this is for cross entropy
@@ -374,14 +404,15 @@ def test_model(X_train, Y_train, X_test, Y_test, num_iterations=50, learning_rat
     nnlayers = [layer1, layer2, layer3]
 
     model = Model(X_train, Y_train, X_test, Y_test, nnlayers)
-    model.run(10, .01)
+    model.run(num_iterations, learning_rate, .5)
 
 
-def get_weights(nnlayers):
+def get_weights(nnlayers, include_biases=True):
     res = []
     for layer in nnlayers:
         res.append(layer.linear_unit.w)
-        res.append(layer.linear_unit.b)
+        if include_biases:
+            res.append(layer.linear_unit.b)
     return res
 
 
@@ -464,17 +495,19 @@ def gradient_check(X, Y):
     return difference
 
 
-(x_train, y_train), (x_test, y_test) = load_data.load_binary_class_data()
-# model(x_train[:, :100], y_train[:100], x_test[:, :100], y_test[:100])
+# Binary class
+# (x_train, y_train), (x_test, y_test) = load_data.load_binary_class_data()
+# test_model(x_train[:, :100], y_train[:100], x_test[:, :100], y_test[:100])
 
-gc_error = gradient_check(x_train[:, :100], y_train[:100])
-print('Gradient check error:', gc_error)
+# gc_error = gradient_check(x_train[:, :100], y_train[:100])
+# print('Gradient check error:', gc_error)
 
 
 # import matplotlib.pyplot as plt
 # plt.imshow(x_train[:, 1].reshape(28, 28))
 
-# (x_train, y_train), (x_test, y_test) = load_data.load_class_data(10)
-# model(x_train, y_train, x_test, y_test)
-# model(x_train[:, :1000], y_train[:, :1000], x_test[:, :1000], y_test[:, :1000])
+# Categorical class
+(x_train, y_train), (x_test, y_test) = load_data.load_class_data(10)
+test_model(x_train, y_train, x_test, y_test)
+# test_model(x_train[:, :1000], y_train[:, :1000], x_test[:, :1000], y_test[:, :1000])
 
