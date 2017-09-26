@@ -12,10 +12,9 @@ class NNLayer:
         activation: activation function
     """
     def __init__(self, n_x, n_h, activation):
-        self.n_x = n_x
-        self.n_h = n_h
-        self.linear_unit = LinearUnit(n_x, n_h)
-        self.activation = activation
+        self.shape = (n_h, n_x)
+        self._linear_unit = LinearUnit(n_x, n_h)
+        self._activation_unit = activation
 
     def forward(self, x):
         """NN forward propagation
@@ -23,18 +22,33 @@ class NNLayer:
         Attributes:
             x (n_x, n_h, n_m) matrix: layer input
         """
-        z = self.linear_unit.activation(x) # linear computation
-        a = self.activation.activation(z) # non-linear activation
+        z = self._linear_unit.activation(x) # linear computation
+        a = self._activation_unit.activation(z) # non-linear activation
         return a
 
     def add_l2_reg(self, lmbd):
         if lmbd is 0:
             return
-        m = self.linear_unit.w.shape[-1]
-        self.linear_unit.w += lmbd / m * self.linear_unit.w
+        m = self._linear_unit.w.shape[-1]
+        self._linear_unit.w += lmbd / m * self._linear_unit.w
 
-    def update_weights(self, learning_rate):
-        self.linear_unit.update_weights(learning_rate)
+    def get_weights(self):
+        w = self._linear_unit.w
+        b = self._linear_unit.b
+        return w, b
+
+    def get_gradients(self):
+        dw = self._linear_unit.dw
+        db = self._linear_unit.db
+        return dw, db
+
+    def set_weights(self, w, b):
+        self._linear_unit.w = w
+        self._linear_unit.b = b
+
+    def subtract_gradient_update(self, dw, db):
+        self._linear_unit.w -= dw
+        self._linear_unit.b -= db
 
     def backward(self, da):
         """NN backward propagation
@@ -44,8 +58,8 @@ class NNLayer:
         Returns:
             dx: AKA da(L-1)
         """
-        dz = self.activation.derivative(da)
-        dx = self.linear_unit.derivative(dz)
+        dz = self._activation_unit.derivative(da)
+        dx = self._linear_unit.derivative(dz)
         return dx
 
 
@@ -55,24 +69,24 @@ class OutputLayer(NNLayer):
         self.cost_function = cost_function
 
     def cost(self, y):
-        a = self.activation.a
+        a = self._activation_unit.a
         return self.cost_function.cost(y, a)
 
     def backward(self, y):
-        a = self.activation.a
+        a = self._activation_unit.a
         dc = self.cost_function.cost_d(y, a)
         # same steps as normal NNLayer
-        dz = self.activation.derivative(dc)
-        da = self.linear_unit.derivative(dz)
+        dz = self._activation_unit.derivative(dc)
+        da = self._linear_unit.derivative(dz)
         return da
 
 
 class OutputLayerShortcut(NNLayer):
     def backward_shortcut(self, y):
-        a = self.activation.a
+        a = self._activation_unit.a
         dz = a - y
-        self.activation.dz = dz
-        da = self.linear_unit.derivative(dz)
+        self._activation_unit.dz = dz
+        da = self._linear_unit.derivative(dz)
         return da
 
 
@@ -91,18 +105,41 @@ class DropoutLayer(NNLayer):
         NNLayer.__init__(self, 0, 0, Dropout(keep_prob))
 
     def forward(self, x):
-        a = self.activation.activation(x) # non-linear activation
+        a = self._activation_unit.activation(x) # non-linear activation
         return a
 
     def add_l2_reg(self, lmbd):
         pass
 
-    def update_weights(self, learning_rate):
-        pass
-
     def backward(self, da):
         return da
 
+
+# class ConvLayer(NNLayer):
+#     def __init__(self, n_h, n_x, n_filters, filter_size, stride, zero_padding, activation):
+#         NNLayer.__init__(n_h, n_x, activation)
+#         self.k = n_filters
+#         self.f = filter_size
+#         self.s = stride
+#         self.p = zero_padding
+#
+#         w, h, d = input
+#         w2 = (w - f + 2 * p) / s + 1
+#         h2 = (h - f + 2 * p) / s + 1
+#         d2 = k
+#
+#
+#
+#     def forward(self, x):
+
+
+
+class FlattenLayer(NNLayer):
+    def __init__(self, n_h, n_x, filter, stride, zero_padding, activation):
+        NNLayer.__init__(n_h, n_x, activation)
+        self.k = filter
+        self.s = stride
+        self.p = zero_padding
 
 class Unit:
     def __init__(self):
@@ -121,8 +158,8 @@ class LinearUnit(Unit):
         self.w, self.b = initialize_weights(n_x, n_h)
         self.z = None
         self.x = None # a_prev
-        self.dw = None
-        self.db = None
+        self.dw = np.zeros(self.w.shape)
+        self.db = np.zeros(self.b.shape)
         # self.dz = None # dz is calculated by activation layer
         self.dx = None # a_prev
 
@@ -150,9 +187,10 @@ class LinearUnit(Unit):
         self.dx, self.dw, self.db = linear_d(dz, self.w, self.x)
         return self.dx
 
-    def update_weights(self, learning_rate):
-        self.w -= learning_rate * self.dw
-        self.b -= learning_rate * self.db
+
+    # def update_weights(self, learning_rate):
+    #     self.w -= learning_rate * self.dw
+    #     self.b -= learning_rate * self.db
 
 
 def initialize_weights(n_x, n_h):
@@ -280,6 +318,113 @@ class Dropout(ActivationUnit):
         return self.dz
 
 
+class Optimizer:
+    def update_weights(self, nnlayers, learning_rate):
+        for layer in nnlayers:
+            dw, db = layer.get_gradients()
+            layer.subtract_gradient_update(learning_rate * dw, learning_rate * db)
+
+
+class Momentum(Optimizer):
+    def __init__(self, mu=0.9):
+        self.v = None
+        self.mu = mu
+
+    def update_weights(self, nnlayers, learning_rate, use_nesterov=True):
+        num_layers = len(nnlayers)
+        if self.v is None:
+            self.v = initialize_cache(nnlayers)
+
+        def momentum(v, mu, dw):
+            v = mu * v - learning_rate * dw  # integrate velocity
+            return -v, v
+
+        def nesterov(v, mu, dw):
+            v_prev = v  # back this up
+            v_new = mu * v - learning_rate * dw  # velocity update stays the same
+            dw_new = mu * v_prev + (1 + mu) * v_new  # position update changes form
+            return -dw_new, v_new
+
+        for i in range(num_layers):
+            layer = nnlayers[i]
+            dw, db = layer.get_gradients()
+            if use_nesterov:
+                dw_new, v_new = nesterov(self.v[i], self.mu, dw)
+            else:
+                dw_new, v_new = momentum(self.v[i], self.mu, dw)
+            layer.subtract_gradient_update(dw_new, learning_rate * db)
+            self.v[i] = v_new
+
+
+class RMSProp(Optimizer):
+    def __init__(self, decay_rate=0.999, eps=1e-8):
+        self.cache = None
+        self.decay_rate = decay_rate
+        self.eps = eps
+
+    def update_weights(self, nnlayers, learning_rate):
+        def rmsprop(decay_rate, eps, cache, dw):
+            cache = decay_rate * cache + (1 - decay_rate) * dw ** 2
+            dw = learning_rate * dw / (np.sqrt(cache) + eps)
+            return dw, cache
+
+        num_layers = len(nnlayers)
+        if self.cache is None:
+            self.cache = initialize_cache(nnlayers)
+
+        for i in range(num_layers):
+            layer = nnlayers[i]
+            dw, db = layer.get_gradients()
+            cache_l = self.cache[i]
+            dw_new, cache_new = rmsprop(self.decay_rate, self.eps, cache_l, dw)
+            # compare_dw = learning_rate * dw
+            layer.subtract_gradient_update(dw_new, learning_rate * db)
+            self.cache[i] = cache_new
+
+
+def initialize_cache(nnlayers):
+    cache = []
+    for layer in nnlayers:
+        c = np.zeros(layer.shape)
+        cache.append(c)
+    return cache
+
+
+class Adam(Optimizer):
+    def __init__(self, mu=0.9, decay_rate=0.999, eps=1e-8):
+        self.cache = None
+        self.decay_rate = decay_rate
+        self.eps = eps
+        self.mu = mu
+        self.v = None
+        self.t = 1
+
+    def update_weights(self, nnlayers, learning_rate):
+        def adam(beta1, beta2, eps, m, v, t, dw):
+            m = beta1 * m + (1 - beta1) * dw
+            mt = m / (1 - beta1 ** t)
+            v = beta2 * v + (1 - beta2) * (dw ** 2)
+            vt = v / (1 - beta2 ** t)
+            dw = learning_rate * mt / (np.sqrt(vt) + eps)
+            return dw, m, v
+
+        num_layers = len(nnlayers)
+        if self.cache is None:
+            self.cache = initialize_cache(nnlayers)
+        if self.v is None:
+            self.v = initialize_cache(nnlayers)
+
+        for i in range(num_layers):
+            layer = nnlayers[i]
+            dw, db = layer.get_gradients()
+            dw_new, v_new, cache_new = adam(self.mu, self.decay_rate, self.eps, self.v[i],
+                                            self.cache[i], self.t, dw)
+            layer.subtract_gradient_update(dw_new, learning_rate * db)
+            self.cache[i] = cache_new
+            self.v[i] = v_new
+            self.t += 1
+
+
 class Cost:
     """Abtract class for loss functions.
 
@@ -376,9 +521,9 @@ def backprop(Y, nnlayers):
     return output_da
 
 
-def update_weights(nnlayers, learning_rate):
-    for layer in nnlayers:
-        layer.update_weights(learning_rate)
+# def update_weights(nnlayers, learning_rate):
+#     for layer in nnlayers:
+#         layer.update_weights(learning_rate)
 
 
 def add_l2_reg(nnlayers, lmbd):
@@ -387,12 +532,13 @@ def add_l2_reg(nnlayers, lmbd):
 
 
 class Model:
-    def __init__(self, X_train, Y_train, X_test, Y_test, nnlayers):
+    def __init__(self, X_train, Y_train, X_test, Y_test, nnlayers, optimizer=Optimizer()):
         self.X_train = X_train
         self.Y_train = Y_train
         self.X_test = X_test
         self.Y_test = Y_test
         self.nnlayers = nnlayers
+        self.optimizer = optimizer
 
     def run(self, num_iterations=50, learning_rate=0.01, lmbd=0):
         for i in range(num_iterations):
@@ -409,7 +555,8 @@ class Model:
             add_l2_reg(self.nnlayers, lmbd)
 
             # update layer weights
-            update_weights(self.nnlayers, learning_rate)
+            self.optimizer.update_weights(self.nnlayers, learning_rate)
+            # update_weights(self.nnlayers, learning_rate)
 
         acc = self.get_accuracy()
         print('Accuracy:', acc)
@@ -439,28 +586,34 @@ def test_model(X_train, Y_train, X_test, Y_test, num_iterations=50, learning_rat
 
     layer1 = NNLayer(n_x, n_h1, activation=RELU())
     layer2 = NNLayer(n_h1, n_h2, activation=RELU())
-    layer3 = DropoutLayer(.5)
+    layer3 = DropoutLayer(.8)
     layer4 = SoftmaxCategoricalLayer(n_h2, n_y)
     nnlayers = [layer1, layer2, layer3, layer4]
 
-    model = Model(X_train, Y_train, X_test, Y_test, nnlayers)
-    model.run(num_iterations, learning_rate, .5)
+    # model = Model(X_train, Y_train, X_test, Y_test, nnlayers, optimizer=RMSProp())
+    # model.run(num_iterations, learning_rate, .5)
+
+    model = Model(X_train, Y_train, X_test, Y_test, nnlayers, optimizer=Adam())
+    model.run(10, .001, .5)
+    model.run(25, .0001, .7)
 
 
 def get_weights(nnlayers, include_biases=True):
     res = []
     for layer in nnlayers:
-        res.append(layer.linear_unit.w)
+        w, b = layer.get_weights()
+        res.append(w)
         if include_biases:
-            res.append(layer.linear_unit.b)
+            res.append(b)
     return res
 
 
 def get_gradients(nnlayers):
     res = []
     for layer in nnlayers:
-        res.append(layer.linear_unit.dw)
-        res.append(layer.linear_unit.db)
+        dw, db = layer.get_gradients()
+        res.append(dw)
+        res.append(db)
     return res
 
 
@@ -474,17 +627,16 @@ def flat_array(x):
 def replace_weights(nnlayers, flat_weights):
     index = 0
     for layer in nnlayers:
-        w = layer.linear_unit.w
+        w, b = layer.get_weights()
         w_s = w.size
         w_new = flat_weights[index:index+w_s].reshape(w.shape)
-        layer.linear_unit.w = w_new
         index += w_s
-
-        b = layer.linear_unit.b
         b_s = b.size
         b_new = flat_weights[index:index+b_s].reshape(b.shape)
-        layer.linear_unit.b = b_new
         index += b_s
+        layer.set_weights(w_new, b_new)
+
+
 
 
 def gradient_check(X, Y):
