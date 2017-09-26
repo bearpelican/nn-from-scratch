@@ -16,7 +16,6 @@ class NNLayer:
         self.n_h = n_h
         self.linear_unit = LinearUnit(n_x, n_h)
         self.activation = activation
-        # self.learning_rate = learning_rate
 
     def forward(self, x):
         """NN forward propagation
@@ -46,8 +45,8 @@ class NNLayer:
             dx: AKA da(L-1)
         """
         dz = self.activation.derivative(da)
-        da = self.linear_unit.derivative(dz)
-        return da
+        dx = self.linear_unit.derivative(dz)
+        return dx
 
 
 class OutputLayer(NNLayer):
@@ -85,6 +84,24 @@ class SoftmaxCategoricalLayer(OutputLayer, OutputLayerShortcut):
 class SigmoidBinaryLayer(OutputLayer, OutputLayerShortcut):
     def __init__(self, n_x, n_h):
         OutputLayer.__init__(self, n_x, n_h, activation=Sigmoid(), cost_function=BinaryCrossEntropy())
+
+
+class DropoutLayer(NNLayer):
+    def __init__(self, keep_prob):
+        NNLayer.__init__(self, 0, 0, Dropout(keep_prob))
+
+    def forward(self, x):
+        a = self.activation.activation(x) # non-linear activation
+        return a
+
+    def add_l2_reg(self, lmbd):
+        pass
+
+    def update_weights(self, learning_rate):
+        pass
+
+    def backward(self, da):
+        return da
 
 
 class Unit:
@@ -145,6 +162,8 @@ def initialize_weights(n_x, n_h):
 
 
 def xavier_initialization(n_x):
+    if n_x is 0:
+        return 0
     return 2 / n_x
 
 
@@ -242,6 +261,25 @@ class Softmax(ActivationUnit):
         return self.dz
 
 
+class Dropout(ActivationUnit):
+    def __init__(self, keep_prob):
+        Unit.__init__(self)
+        self.keep_prob = keep_prob
+        self.d = None
+
+    def activation(self, z):
+        d = np.random.rand(*z.shape)
+        self.d = d < self.keep_prob
+        a = z * self.d
+        self.a = a / self.keep_prob
+        return self.a
+
+    def derivative(self, da):
+        da = da * self.d  # Step 1: Apply mask d to shut down the same neurons as during the forward propagation
+        self.dz = da / self.keep_prob  # Step 2: Scale the value of neurons that haven't been shut down
+        return self.dz
+
+
 class Cost:
     """Abtract class for loss functions.
 
@@ -296,12 +334,14 @@ class BinaryCrossEntropy(Cost):
         return self.dc
 
 
-def forward_pass(X, Y, nnlayers, lmbd=0):
+def forward_pass(X, Y, nnlayers, disable_dropout=False):
     hidden_layers = nnlayers[:-1]
     output_layer = nnlayers[-1]
 
     input_x = X
     for layer in hidden_layers:
+        if type(layer) is DropoutLayer and disable_dropout:
+            continue
         input_x = layer.forward(input_x)
 
     a = output_layer.forward(input_x)
@@ -355,7 +395,6 @@ class Model:
         self.nnlayers = nnlayers
 
     def run(self, num_iterations=50, learning_rate=0.01, lmbd=0):
-        use_l2_reg = lmbd > 0
         for i in range(num_iterations):
             # forward pass
             cost, _ = forward_pass(self.X_train, self.Y_train, self.nnlayers)
@@ -381,7 +420,7 @@ class Model:
             y = self.Y_test
 
         # Accuracy
-        cost, a_L = forward_pass(x, y, self.nnlayers, lmbd=0)
+        cost, a_L = forward_pass(x, y, self.nnlayers, disable_dropout=True)
         # pred = np.round(a3)
 
         # this is for cross entropy
@@ -400,8 +439,9 @@ def test_model(X_train, Y_train, X_test, Y_test, num_iterations=50, learning_rat
 
     layer1 = NNLayer(n_x, n_h1, activation=RELU())
     layer2 = NNLayer(n_h1, n_h2, activation=RELU())
-    layer3 = SoftmaxCategoricalLayer(n_h2, n_y)
-    nnlayers = [layer1, layer2, layer3]
+    layer3 = DropoutLayer(.5)
+    layer4 = SoftmaxCategoricalLayer(n_h2, n_y)
+    nnlayers = [layer1, layer2, layer3, layer4]
 
     model = Model(X_train, Y_train, X_test, Y_test, nnlayers)
     model.run(num_iterations, learning_rate, .5)
