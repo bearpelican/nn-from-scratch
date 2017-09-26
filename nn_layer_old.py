@@ -9,14 +9,13 @@ class NNLayer:
     Attributes:
         n_x: number of inputs (from previous layer)
         n_h: number of hidden units per layer
-        activation: activation function
     """
-    def __init__(self, n_x, n_h, activation):
+    def __init__(self, n_x, n_h, activation, learning_rate=1):
         self.n_x = n_x
         self.n_h = n_h
         self.linear_unit = LinearUnit(n_x, n_h)
         self.activation = activation
-        # self.learning_rate = learning_rate
+        self.learning_rate = learning_rate
 
     def forward(self, x):
         """NN forward propagation
@@ -28,8 +27,8 @@ class NNLayer:
         a = self.activation.activation(z) # non-linear activation
         return a
 
-    def update_weights(self, learning_rate):
-        self.linear_unit.update_weights(learning_rate)
+    def update_weights(self):
+        self.linear_unit.update_weights(self.learning_rate)
 
     def backward(self, da):
         """NN backward propagation
@@ -45,40 +44,40 @@ class NNLayer:
 
 
 class OutputLayer(NNLayer):
-    def __init__(self, n_x, n_h, activation, cost_function):
-        NNLayer.__init__(self, n_x, n_h, activation)
-        self.cost_function = cost_function
+    def __init__(self, n_x, n_h, activation, cost, learning_rate=1):
+        NNLayer.__init__(n_x, n_h, activation, learning_rate)
+        self.cost = cost
 
     def cost(self, y):
         a = self.activation.a
-        return self.cost_function.cost(y, a)
+        return self.cost.cost(y, a)
 
     def backward(self, y):
         a = self.activation.a
-        dc = self.cost_function.cost_d(y, a)
+        dc = self.cost.derivative(y, a)
         # same steps as normal NNLayer
         dz = self.activation.derivative(dc)
         da = self.linear_unit.derivative(dz)
         return da
 
 
-class OutputLayerShortcut(NNLayer):
+class OutputLayerShortcut(OutputLayer):
     def backward_shortcut(self, y):
         a = self.activation.a
-        dz = a - y
+        dz = y - a
         self.activation.dz = dz
         da = self.linear_unit.derivative(dz)
         return da
 
 
 class SoftmaxCategoricalLayer(OutputLayer, OutputLayerShortcut):
-    def __init__(self, n_x, n_h):
-        OutputLayer.__init__(self, n_x, n_h, activation=Softmax(), cost_function=CategoricalCrossEntropy())
+    def __init__(self, n_x, n_h, learning_rate=1):
+        OutputLayer.__init__(n_x, n_h, activation=Softmax(), cost=CategoricalCrossEntropy(), learning_rate=learning_rate)
 
 
 class SigmoidBinaryLayer(OutputLayer, OutputLayerShortcut):
-    def __init__(self, n_x, n_h):
-        OutputLayer.__init__(self, n_x, n_h, activation=Sigmoid(), cost_function=BinaryCrossEntropy())
+    def __init__(self, n_x, n_h, learning_rate=1):
+        OutputLayer.__init__(n_x, n_h, activation=Sigmoid(), cost=BinaryCrossEntropy(), learning_rate=learning_rate)
 
 
 class Unit:
@@ -124,7 +123,7 @@ class LinearUnit(Unit):
             dw = 1 / m * np.dot(_dz, x.T)  # (n_h, m) * (m, n_x)
             db = np.mean(_dz, axis=1, keepdims=True)  # (n_h, m) / m
             return dx, dw, db
-        self.dx, self.dw, self.db = linear_d(dz, self.w, self.x)
+        self.dx, self.dw, self.db = linear_d(dz, self.w, self.dx)
         return self.dx
 
     def update_weights(self, learning_rate):
@@ -290,130 +289,110 @@ class BinaryCrossEntropy(Cost):
         return self.dc
 
 
-def forward_pass(X, Y, nnlayers):
-    hidden_layers = nnlayers[:-1]
-    output_layer = nnlayers[-1]
+def forward_pass(X, Y, weights):
+    w1, b1, w2, b2, w3, b3 = weights
+    # forward pass
+    z1 = linear(w1, X, b1)
+    a1 = relu(z1)
 
-    input_x = X
-    for layer in hidden_layers:
-        input_x = layer.forward(input_x)
+    z2 = linear(w2, a1, b2)
+    a2 = relu(z2)
 
-    a = output_layer.forward(input_x)
-    cost = output_layer.cost(Y)
-    return cost, a
+    z3 = linear(w3, a2, b3)
+    a3 = softmax(z3)
 
-
-def backprop_shortcut(Y, nnlayers):
-    output_layer, *hidden_layers = reversed(nnlayers)
-    output_da = output_layer.backward_shortcut(Y)
-    for layer in hidden_layers:
-        output_da = layer.backward(output_da)
-    return output_da
+    # Cost
+    cost = categorical_cross_entropy(Y, a3)
+    return (cost, (z1, a1, z2, a2, z3, a3))
 
 
-def backprop(Y, nnlayers):
-    output_da = Y
-    for layer in reversed(nnlayers):
-        output_da = layer.backward(output_da)
-    return output_da
+def backprop(X, Y, weights, activations):
+    w1, b1, w2, b2, w3, b3 = weights
+    z1, a1, z2, a2, z3, a3 = activations
+
+    dz3 = a3 - Y
+
+    cost_d = categorical_cross_entropy_d(Y, a3)
+    da3 = softmax_d_m(a3)
+    print('A3', a3.shape)
+    print(cost_d.shape)
+    print(da3.shape)
+    cost_d_r = cost_d.reshape((cost_d.shape[0], 1, cost_d.shape[1]))
+    dz3_step = np.einsum('ijk,jyk->iyk', da3, cost_d_r)
+    dz3_step_r = dz3_step.reshape((dz3_step.shape[0], dz3_step.shape[2]))
+
+    dz3_test = np.einsum('ijk,jk->ik', da3, cost_d)
 
 
-def update_weights(nnlayers, learning_rate):
-    for layer in nnlayers:
-        layer.update_weights(learning_rate)
+    _, m = a2.shape
+    dw3 = 1 / m * np.dot(dz3, a2.T)    # (n_h, m) * (m, n_x)
+    db3 = np.mean(dz3, axis=1, keepdims=True)     # (n_h, m) / m
+    da2 = np.dot(w3.T, dz3)   # (n_x, n_h) * (n_h, m)
+    # da2, dw3, db3 = linear_d(dz3, w3, a2)
 
+    _, m = a1.shape
+    dz2 = relu_d(a2) * da2
+    dw2 = 1 / m * np.dot(dz2, a1.T)    # (n_h, m) * (m, n_x)
+    db2 = np.mean(dz2, axis=1, keepdims=True)     # (n_h, m) / m
+    da1 = np.dot(w2.T, dz2)   # (n_x, n_h) * (n_h, m)
+    # da1, dw2, db2 = linear_d(dz2, w2, a1)
 
-class Model:
-    def __init__(self, X_train, Y_train, X_test, Y_test, nnlayers):
-        self.X_train = X_train
-        self.Y_train = Y_train
-        self.X_test = X_test
-        self.Y_test = Y_test
-        self.nnlayers = nnlayers
+    _, m = X.shape
+    dz1 = relu_d(a1) * da1
+    dw1 = 1 / m * np.dot(dz1, X.T)    # (n_h, m) * (m, n_x)
+    db1 = np.mean(dz1, axis=1, keepdims=True)     # (n_h, m) / m
+    # _, dw1, db1 = linear_d(dz1, w1, X)
 
-    def run(self, num_iterations=50, learning_rate=0.01):
-        for i in range(num_iterations):
-            # forward pass
-            cost, _ = forward_pass(self.X_train, self.Y_train, self.nnlayers)
-            print('Cost:', cost)
-
-            # backprop(Y_train, nnlayers)
-            backprop_shortcut(self.Y_train, self.nnlayers)
-
-            update_weights(self.nnlayers, learning_rate)
-
-        acc = self.get_accuracy()
-        print('Accuracy:', acc)
-
-    def get_accuracy(self, x=None, y=None):
-        if x is None and y is None:
-            x = self.X_test
-            y = self.Y_test
-
-        # Accuracy
-        cost, a_L = forward_pass(x, y, self.nnlayers)
-        # pred = np.round(a3)
-
-        # this is for cross entropy
-        pred = np.zeros(a_L.shape)
-        pred[a_L.argmax(axis=0), np.arange(a_L.shape[1])] = 1
-
-        acc = np.mean(pred == y)
-        return acc
+    return dw1, db1, dw2, db2, dw3, db3
 
 # Let's create a model with 2 hidden layers with 100 units
-def test_model(X_train, Y_train, X_test, Y_test, num_iterations=50, learning_rate=0.01):
+def model(X_train, Y_train, X_test, Y_test, num_iterations=50, learning_rate=0.01):
     n_x, n_m = X_train.shape
     n_y, _ = Y_train.shape
     # n_y = 1
     n_h1, n_h2 = [100, 100]
 
-    layer1 = NNLayer(n_x, n_h1, activation=RELU())
-    layer2 = NNLayer(n_h1, n_h2, activation=RELU())
-    layer3 = SoftmaxCategoricalLayer(n_h2, n_y)
-    nnlayers = [layer1, layer2, layer3]
+    w1, b1 = initialize_weights(n_x, n_h1)
+    w2, b2 = initialize_weights(n_h1, n_h2)
+    w3, b3 = initialize_weights(n_h2, n_y)
 
-    model = Model(X_train, Y_train, X_test, Y_test, nnlayers)
-    model.run(10, .01)
+    for i in range(num_iterations):
+        # forward pass
+        weights = w1, b1, w2, b2, w3, b3
+        cost, activations = forward_pass(X_train, Y_train, weights)
+        print('Cost:', cost)
 
+        gradients = backpropagate(X_train, Y_train, weights, activations)
+        dw1, db1, dw2, db2, dw3, db3 = gradients
 
-def get_weights(nnlayers):
-    res = []
-    for layer in nnlayers:
-        res.append(layer.linear_unit.w)
-        res.append(layer.linear_unit.b)
-    return res
+        assert(dw3.shape == w3.shape)
+        assert(dw2.shape == w2.shape)
+        assert(dw1.shape == w1.shape)
 
+        # Update weights
+        w3 -= learning_rate * dw3
+        b3 -= learning_rate * db3
+        w2 -= learning_rate * dw2
+        b2 -= learning_rate * db2
+        w1 -= learning_rate * dw1
+        b1 -= learning_rate * db1
 
-def get_gradients(nnlayers):
-    res = []
-    for layer in nnlayers:
-        res.append(layer.linear_unit.dw)
-        res.append(layer.linear_unit.db)
-    return res
+    # Accuracy
+    weights = w1, b1, w2, b2, w3, b3
+    cost, activations = forward_pass(X_test, Y_test, weights)
+    z1, a1, z2, a2, z3, a3 = activations
+    # pred = np.round(a3)
 
+    # this is for cross entropy
+    pred = np.zeros(a3.shape)
+    pred[a3.argmax(axis=0), np.arange(a3.shape[1])] = 1
 
-def flat_array(x):
-    res = np.array([])
-    for arr in x:
-        res = np.concatenate((res, arr.flatten()))
-    return res
+    acc = np.mean(pred == Y_test)
+    # print(pred == Y_test)
+    print('Accuracy:', acc)
 
+    return acc
 
-def replace_weights(nnlayers, flat_weights):
-    index = 0
-    for layer in nnlayers:
-        w = layer.linear_unit.w
-        w_s = w.size
-        w_new = flat_weights[index:index+w_s].reshape(w.shape)
-        layer.linear_unit.w = w_new
-        index += w_s
-
-        b = layer.linear_unit.b
-        b_s = b.size
-        b_new = flat_weights[index:index+b_s].reshape(b.shape)
-        layer.linear_unit.b = b_new
-        index += b_s
 
 
 def gradient_check(X, Y):
@@ -422,59 +401,63 @@ def gradient_check(X, Y):
     n_y = 1
     n_h1, n_h2 = [10, 10]
 
-    layer1 = NNLayer(n_x, n_h1, activation=RELU())
-    layer2 = NNLayer(n_h1, n_h2, activation=RELU())
-    layer3 = SigmoidBinaryLayer(n_h2, n_y)
-    nnlayers = [layer1, layer2, layer3]
+    w1, b1 = initialize_weights(n_x, n_h1)
+    w2, b2 = initialize_weights(n_h1, n_h2)
+    w3, b3 = initialize_weights(n_h2, n_y)
 
-    cost, _ = forward_pass(X, Y, nnlayers)
-    print('Cost:', cost)
-    backprop_shortcut(Y, nnlayers)
+    weights = w1, b1, w2, b2, w3, b3
+    cost1, activations = forward_pass(X, Y, weights)
+    gradients = backpropagate(X, Y, weights, activations)
+    approx_gradients = copy.deepcopy(gradients)
 
+    # Gradient checking
+    epsilon = .00001
+    all_weights = (w1, b1, w2, b2, w3, b3)
+    num_parameters = len(all_weights)
 
-    epsilon = .0001
-    weights = get_weights(nnlayers)
-    unrolled_weights = flat_array(weights)
+    for i in range(num_parameters):
+        current_param = all_weights[i]
 
-    approx_gradients = np.empty(unrolled_weights.shape)
+        for row in range(current_param.shape[0]):
+            for col in range(current_param.shape[1]):
+                thetaplus = copy.deepcopy(all_weights)
+                thetaminus = copy.deepcopy(all_weights)
 
-    for i in range(unrolled_weights.size):
-        thetaplus = copy.deepcopy(unrolled_weights)
-        thetaminus = copy.deepcopy(unrolled_weights)
+                thetaplus[i][row, col] = (thetaplus[i][row, col] + epsilon)
+                thetaminus[i][row, col] = (thetaminus[i][row, col] - epsilon)
 
-        thetaplus[i] = (thetaplus[i] + epsilon)
-        thetaminus[i] = (thetaminus[i] - epsilon)
+                J_plus, _ = forward_pass(X, Y, thetaplus)
+                J_minus, _ = forward_pass(X, Y, thetaminus)
 
-        replace_weights(nnlayers, thetaplus)
-        J_plus, _ = forward_pass(X, Y, nnlayers)
-
-        replace_weights(nnlayers, thetaminus)
-        J_minus, _ = forward_pass(X, Y, nnlayers)
-
-        approx = (J_plus - J_minus) / (2 * epsilon)
-        approx_gradients[i] = approx
+                approx = (J_plus - J_minus) / (2 * epsilon)
+                approx_gradients[i][row, col] = approx
+        print('Completed param:', i)
 
     def euclidean(x):
         return np.sqrt(np.sum(x ** 2))
 
-    np_gradients = flat_array(get_gradients(nnlayers))
-    numerator = euclidean(np_gradients - approx_gradients)
-    denominator = euclidean(np_gradients) + euclidean(approx_gradients)
+    def flat_array(x):
+        res = np.array([])
+        for i in range(len(x)):
+            res = np.concatenate((res, x[i].flatten()))
+        return res
+
+    np_gradients = flat_array(gradients)
+    np_gradients_approx = flat_array(approx_gradients)
+    numerator = euclidean(np.array(np_gradients) - np.array(np_gradients_approx))
+    denominator = euclidean(np_gradients) + euclidean(np_gradients_approx)
     difference = numerator / denominator
     return difference
 
-
-(x_train, y_train), (x_test, y_test) = load_data.load_binary_class_data()
+# (x_train, y_train), (x_test, y_test) = load_data.load_binary_class_data()
 # model(x_train[:, :100], y_train[:100], x_test[:, :100], y_test[:100])
 
-gc_error = gradient_check(x_train[:, :100], y_train[:100])
-print('Gradient check error:', gc_error)
-
+# gradient_check(x_train[:, :100], y_train[:100])
 
 # import matplotlib.pyplot as plt
 # plt.imshow(x_train[:, 1].reshape(28, 28))
 
-# (x_train, y_train), (x_test, y_test) = load_data.load_class_data(10)
-# model(x_train, y_train, x_test, y_test)
+(x_train, y_train), (x_test, y_test) = load_data.load_class_data(10)
+model(x_train, y_train, x_test, y_test)
 # model(x_train[:, :1000], y_train[:, :1000], x_test[:, :1000], y_test[:, :1000])
 
