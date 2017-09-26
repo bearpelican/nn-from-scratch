@@ -115,22 +115,53 @@ class DropoutLayer(NNLayer):
         return da
 
 
-# class ConvLayer(NNLayer):
-#     def __init__(self, n_h, n_x, n_filters, filter_size, stride, zero_padding, activation):
-#         NNLayer.__init__(n_h, n_x, activation)
-#         self.k = n_filters
-#         self.f = filter_size
-#         self.s = stride
-#         self.p = zero_padding
-#
-#         w, h, d = input
-#         w2 = (w - f + 2 * p) / s + 1
-#         h2 = (h - f + 2 * p) / s + 1
-#         d2 = k
-#
-#
-#
-#     def forward(self, x):
+class ConvLayer(NNLayer):
+    def __init__(self, n_h, n_x, n_filters, filter_size, stride, zero_padding, activation):
+        NNLayer.__init__(n_h, n_x, activation)
+        self.k = n_filters
+        self.f = filter_size
+        self.s = stride
+        self.p = zero_padding
+
+        # w, h, d, m = input_x.shape
+        # w2 = (w - f + 2 * p) / s + 1
+        # h2 = (h - f + 2 * p) / s + 1
+        # d2 = k
+        #
+        # self.weights = (n_filters, filter_size_w, filter_size_h, d)
+        # self.output = (w2, h2, d2, m)
+
+    def initialize_conv_weights(self, f, d, k):
+        w = np.random.randn(f, f, d, k) * xavier_initialization(f * f * d)
+        b = np.zeros((k, 1), dtype=np.float32)
+        return w, b
+
+    def forward(self, x):
+        w, h, d, m = x.shape
+        if self.weights is None:
+            self.weights = self.initialize_conv_weights(self.f, d, self.k)
+        # self.weights = (filter_size_w, filter_size_h, d, n_filters)
+
+        p = self.p
+        w2 = (w - self.f + 2 * p) / self.s + 1
+        h2 = (h - self.f + 2 * p) / self.s + 1
+        d2 = self.k
+
+        output = np.empty((w2, h2, d2, m))
+
+        pad_width = ((p, p), (p, p), (0, 0)) # pad images with 0. Do not pad examples axis=2
+        x_pad = np.pad(x, pad_width=pad_width, mode='constant', constant_values=0)
+
+        for i in range(w2):
+            for j in range(h2):
+                i_idx = i * self.s
+                j_idx = i * self.s
+                x_slice = x_pad[i_idx:i_idx+self.f, j_idx:j_idx+self.f, :, :]
+
+                # w_filter = self.weights[i, :, :, :]
+                stride_value = np.einsum('whdm,whdx->xm', x_slice, self.weights)
+                output[i, j, :, :] = stride_value
+
 
 
 
