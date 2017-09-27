@@ -18,33 +18,37 @@ else:
 
 (x_train, y_train), (x_test, y_test) = mnist_data
 
+
 # Data preparation
 def load_data():
     # (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    return format_data(x_train, y_train, 10), format_data(x_test, y_test, 10)
+    return load_class_data(10)
 
 
-def load_class_data(num_classes=None):
+def load_class_data(num_classes=None, should_onehot=True, should_flatten=True):
     # (x_train, y_train), (x_test, y_test) = mnist.load_data()
     if num_classes is None:
         num_classes = np.max(y_train)
     idx_train = y_train < num_classes
     idx_test = y_test < num_classes
-    return format_data(x_train[idx_train], y_train[idx_train], num_classes), format_data(x_test[idx_test], y_test[idx_test], num_classes)
+    return format_data(x_train[idx_train], y_train[idx_train], num_classes, should_onehot, should_flatten), format_data(x_test[idx_test], y_test[idx_test], num_classes, should_onehot, should_flatten)
 
 
-def format_data(x, y, n_hot=None):
-    if n_hot:
-        y = onehot(y, n_hot)
-    x_r = flatten(reshape_m(x))
+def format_data(x, y, n_classes, should_onehot=True, should_flatten=True):
+    if should_onehot:
+        y = onehot(y, n_classes)
+    x_r = reshape_m(x)
+    if should_flatten:
+        x_r = flatten(x_r)
     return x_r, y
 
 
 def load_binary_class_data():
+    return load_class_data(2, should_onehot=False)
     # (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    idx_train = y_train < 2
-    idx_test = y_test < 2
-    return format_data(x_train[idx_train], y_train[idx_train]), format_data(x_test[idx_test], y_test[idx_test])
+    # idx_train = y_train < 2
+    # idx_test = y_test < 2
+    # return format_data(x_train[idx_train], y_train[idx_train], 2), format_data(x_test[idx_test], y_test[idx_test])
 
 
 def onehot(y, n_c):

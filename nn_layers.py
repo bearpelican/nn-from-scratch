@@ -11,11 +11,13 @@ class NNLayer:
         n_h: number of hidden units per layer
         activation: activation function
     """
-    def __init__(self):
+    def __init__(self, activation):
         self.shape = (0, 0)
+        self._activation_unit = activation
 
     def forward(self, x):
-        raise NotImplementedError  # you want to override this on the child classes
+        a = self._activation_unit.activation(x)
+        return a
 
     def add_l2_reg(self, lmbd):
         pass
@@ -35,7 +37,9 @@ class NNLayer:
         pass
 
     def backward(self, da):
-        raise NotImplementedError  # you want to override this on the child classes
+        dz = self._activation_unit.derivative(da)
+        return dz
+
 
 
 class ActivationLayer(NNLayer):
@@ -137,8 +141,7 @@ class SigmoidBinaryLayer(OutputLayer, OutputLayerShortcut):
 
 class DropoutLayer(NNLayer):
     def __init__(self, keep_prob):
-        NNLayer.__init__(self)
-        self._activation_unit = Dropout(keep_prob)
+        NNLayer.__init__(self, Dropout(keep_prob))
 
     def forward(self, x):
         a = self._activation_unit.activation(x) # non-linear activation
@@ -149,13 +152,18 @@ class DropoutLayer(NNLayer):
 
 
 class ConvLayer(NNLayer):
-    def __init__(self, n_filters, filter_size, stride, zero_padding):
-        NNLayer.__init__(self)
+    def __init__(self, n_filters, filter_size=3, stride=1, same_padding=True):
+        NNLayer.__init__(self, RELU())
         self.k = n_filters
         self.f = filter_size
         self.s = stride
-        self.p = zero_padding
+        # self.p = zero_padding
+        self.p = 0
+        if same_padding:
+            self.p = (self.f - 1) / 2
 
+        self.weights = None
+        self.b = None
         # w, h, d, m = input_x.shape
         # w2 = (w - f + 2 * p) / s + 1
         # h2 = (h - f + 2 * p) / s + 1
@@ -169,6 +177,97 @@ class ConvLayer(NNLayer):
         b = np.zeros((k, 1), dtype=np.float32)
         return w, b
 
+    def forward(self, x):
+        w, h, m = x.shape
+        x = x.reshape((w, h, 1, m))
+        w, h, d, m = x.shape
+        if self.weights is None:
+            self.weights, self.b = self.initialize_conv_weights(self.f, d, self.k)
+        # self.weights = (filter_size_w, filter_size_h, d, n_filters)
+
+        p = int(self.p)
+        w2 = int((w - self.f + 2 * p) / self.s + 1)
+        h2 = int((h - self.f + 2 * p) / self.s + 1)
+        d2 = self.k
+
+        output = np.empty((w2, h2, d2, m))
+
+        pad_width = ((p, p), (p, p), (0, 0), (0, 0)) # pad images with 0. Do not pad examples axis=2
+        x_pad = np.pad(x, pad_width=pad_width, mode='constant', constant_values=0)
+
+        for i in range(w2):
+            for j in range(h2):
+                i_idx = i * self.s
+                j_idx = j * self.s
+                x_slice = x_pad[i_idx:i_idx+self.f, j_idx:j_idx+self.f, :, :]
+
+                # w_filter = self.weights[i, :, :, :]
+                stride_value = np.einsum('whdm,whdx->xm', x_slice, self.weights)
+                output[i, j, :, :] = stride_value + self.b
+
+        z = output
+        a = self._activation_unit.activation(z)
+        return a
+
+
+
+    def backward(self, da):
+        """NN backward propagation
+
+        Attributes:
+            da (n_x, n_h, n_m) matrix: derivative of activation from current layer (L). AKA dx(L+1)
+        Returns:
+            dx: AKA da(L-1)
+        """
+        dz = self._activation_unit.derivative(da)
+
+        def linear_d(_dz, w, x):
+            # b = (k, 1) - bias is always dz. no need to pass in as param
+            # w = (f, f, d1, k)
+            # dz = (w2, h2, k, m)
+            # x = (w1, h1, d1, m) AKA a_previous
+            _, m = x.shape
+
+            dx = dz * w_rot * self._activation_unit.derivative(z)
+            dx = np.dot(w.T, _dz) # (f, f, d1, k)  x  (w2, h2, k, m) = (w1, h1, d1, m)
+            dw = 1 / m * np.dot(_dz, x.T)  # (w2, h2, k, m) x (w1, h1, d1, m) = (f, f, d1, k)
+            db = np.mean(_dz, axis=1, keepdims=True)  # (w2, h2, k, m) / m = (k, 1)
+            return dx, dw, db
+
+        # self.dx, self.dw, self.db = linear_d(dz, self.w, self.x)
+        # return self.dx
+
+        w, h, m = x.shape
+        x = x.reshape((w, h, 1, m))
+        w, h, d, m = x.shape
+        if self.weights is None:
+            self.weights, self.b = self.initialize_conv_weights(self.f, d, self.k)
+        # self.weights = (filter_size_w, filter_size_h, d, n_filters)
+
+        p = int(self.p)
+        w2 = int((w - self.f + 2 * p) / self.s + 1)
+        h2 = int((h - self.f + 2 * p) / self.s + 1)
+        d2 = self.k
+
+        output = np.empty((w2, h2, d2, m))
+
+        pad_width = ((p, p), (p, p), (0, 0), (0, 0)) # pad images with 0. Do not pad examples axis=2
+        x_pad = np.pad(x, pad_width=pad_width, mode='constant', constant_values=0)
+
+        for i in range(w2):
+            for j in range(h2):
+                i_idx = i * self.s
+                j_idx = j * self.s
+                x_slice = x_pad[i_idx:i_idx+self.f, j_idx:j_idx+self.f, :, :]
+
+                # w_filter = self.weights[i, :, :, :]
+                stride_value = np.einsum('whdm,whdx->xm', x_slice, self.weights)
+                output[i, j, :, :] = stride_value + self.b
+
+        z = output
+        a = self._activation_unit.activation(z)
+        return a
+"""                
     def forward(self, x):
         w, h, d, m = x.shape
         if self.weights is None:
@@ -194,18 +293,19 @@ class ConvLayer(NNLayer):
                 # w_filter = self.weights[i, :, :, :]
                 stride_value = np.einsum('whdm,whdx->xm', x_slice, self.weights)
                 output[i, j, :, :] = stride_value
+"""
 
 
 class FlattenLayer(NNLayer):
     def __init__(self):
-        self.original_shape = []
+        self.input_shape = []
 
     def forward(self, x):
-        self.original_shape = x.shape
+        self.input_shape = x.shape
         return flat_array(x)
 
     def backward(self, da):
-        return da.reshape(self.shape)
+        return da.reshape(self.input_shape)
 
 
 class Unit:
@@ -646,16 +746,18 @@ class Model:
 
 # Let's create a model with 2 hidden layers with 100 units
 def test_model(X_train, Y_train, X_test, Y_test, num_iterations=50, learning_rate=0.01):
-    n_x, n_m = X_train.shape
+    # n_x, n_m = X_train.shape
+    n_w, n_h, n_m = X_train.shape
     n_y, _ = Y_train.shape
     # n_y = 1
     n_h1, n_h2 = [100, 100]
 
-    layer1 = ActivationLayer(n_x, n_h1, activation=RELU())
-    layer2 = ActivationLayer(n_h1, n_h2, activation=RELU())
-    layer3 = DropoutLayer(.8)
-    layer4 = SoftmaxCategoricalLayer(n_h2, n_y)
-    nnlayers = [layer1, layer2, layer3, layer4]
+    layer1 = ConvLayer(10)
+    layer2 = FlattenLayer()
+    layer3 = ActivationLayer(n_w * n_h, n_h1, activation=RELU())
+    layer4 = ActivationLayer(n_h1, n_h2, activation=RELU())
+    layer5 = SoftmaxCategoricalLayer(n_h2, n_y)
+    nnlayers = [layer1, layer2, layer3, layer4, layer5]
 
     # model = Model(X_train, Y_train, X_test, Y_test, nnlayers, optimizer=RMSProp())
     # model.run(num_iterations, learning_rate, .5)
@@ -766,7 +868,7 @@ def gradient_check(X, Y):
 # plt.imshow(x_train[:, 1].reshape(28, 28))
 
 # Categorical class
-(x_train, y_train), (x_test, y_test) = load_data.load_class_data(10)
-test_model(x_train, y_train, x_test, y_test)
-# test_model(x_train[:, :1000], y_train[:, :1000], x_test[:, :1000], y_test[:, :1000])
+(x_train, y_train), (x_test, y_test) = load_data.load_class_data(10, should_flatten=False)
+# test_model(x_train, y_train, x_test, y_test)
+test_model(x_train[:, :1000], y_train[:, :1000], x_test[:, :1000], y_test[:, :1000])
 
